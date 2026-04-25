@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{ t['register'] }}</title>
+
+    <!-- Bootstrap -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <!-- Your CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+
+<body>
+
+<div class="top-header">
+
+    <!-- Left: Logo -->
+    <div class="logo">
+        <img src="{{ url_for('static', filename='images/logo.jpeg') }}" alt="logo">
+    </div>
+
+    <!-- Center: Title -->
+    <div class="title">
+        GrievTech
+    </div>
+
+    <!-- Right: Language -->
+    <div class="lang">
+        <a href="/set_language/en">English</a> |
+        <a href="/set_language/kn">ಕನ್ನಡ</a>
+    </div>
+
+</div>
+
+<!-- 🔹 CENTER CONTAINER -->
+<div class="container d-flex justify-content-center align-items-center vh-100">
+
+    <!-- 🔥 FIXED HERE -->
+    <div class="form-container glass-card" style="width: 350px;">
+
+        <h3 class="text-center mb-3">{{ t['register'] }}</h3>
+
+<form method="POST">
+
+    <!-- 🔹 STEP 1 -->
+    <input type="text" name="name" placeholder="{{t['name']}}" required>
+    <input type="email" name="email" placeholder="{{t['email']}}" required>
+    <input type="password" name="password" placeholder="{{t['password']}}" required>
+
+    {% if not show_otp %}
+        <button type="submit" name="action" value="send_otp">
+            Send OTP
+        </button>
+    {% endif %}
+
+    <!-- 🔹 STEP 2 (ONLY AFTER OTP SENT) -->
+    {% if show_otp %}
+        <input type="text" name="otp" placeholder="Enter OTP" required>
+
+        <button type="submit" name="action" value="verify_otp">
+            Register
+        </button>
+    {% endif %}
+
+</form>
+
+        <div class="text-center mt-3">
+            <p>
+                {{ t['already_account'] }}
+                <a href="/login" class="fw-bold">{{ t['login'] }}</a>
+            </p>
+        </div>
+
+    </div>
+
+</div>
+
+</body>
+</html>

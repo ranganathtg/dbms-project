@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Admin Dashboard</title>
+
+    <!-- Bootstrap -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <!-- Icons -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+
+    <!-- CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+
+<body class="bg-light">
+
+<!-- HEADER -->
+<div class="top-header">
+    <div class="logo">
+        <img src="{{ url_for('static', filename='images/logo.jpeg') }}" alt="logo">
+    </div>
+
+    <div class="title">GrievTech</div>
+
+    <div class="lang">
+        <a href="/set_language/en">English</a> |
+        <a href="/set_language/kn">ಕನ್ನಡ</a>
+    </div>
+</div>
+
+<div class="container">
+
+    <h2 class="text-center mb-3">Admin Dashboard</h2>
+
+    <div class="text-end mb-3">
+        <a href="/logout" class="btn btn-primary">
+            <i class="fa fa-sign-out-alt"></i> Logout
+        </a>
+    </div>
+
+    <!-- STATS -->
+    <div class="row text-center mb-4">
+
+        <div class="col-md-4">
+            <div class="card shadow p-3">
+                <i class="fa fa-file fa-2x text-primary"></i>
+                <h6>Total Complaints</h6>
+                <h3>{{ stats.total }}</h3>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <div class="card shadow p-3">
+                <i class="fa fa-exclamation-triangle fa-2x text-danger"></i>
+                <h6 class="text-danger">Emergency</h6>
+                <h3>{{ stats.emergency }}</h3>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <div class="card shadow p-3">
+                <i class="fa fa-check-circle fa-2x text-success"></i>
+                <h6 class="text-success">Resolved</h6>
+                <h3>{{ stats.resolved }}</h3>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- ALERT -->
+    {% if alert and alert.emergency_pending > 0 %}
+    <div class="alert alert-danger text-center">
+        ⚠ {{ alert.emergency_pending }} Emergency complaints pending!
+    </div>
+    {% endif %}
+
+    <!-- 🔥 COMBINED FILTER FORM -->
+    <div class="card p-3 text-center mb-4">
+        <form method="GET" action="/admin">
+
+            <!-- CATEGORY -->
+            <select name="category" onchange="this.form.submit()" class="form-select w-50 mx-auto mb-2">
+                <option value="">-- Select Problem Type --</option>
+                <option value="All" {% if selected_category=='All' %}selected{% endif %}>All</option>
+                <option value="Emergency" {% if selected_category=='Emergency' %}selected{% endif %}>Emergency</option>
+                <option value="Water" {% if selected_category=='Water' %}selected{% endif %}>Water</option>
+                <option value="Road" {% if selected_category=='Road' %}selected{% endif %}>Road</option>
+                <option value="Electricity" {% if selected_category=='Electricity' %}selected{% endif %}>Electricity</option>
+                <option value="Garbage" {% if selected_category=='Garbage' %}selected{% endif %}>Garbage</option>
+            </select>
+
+            <!-- PERIOD -->
+            <select name="period" onchange="this.form.submit()" class="form-select w-50 mx-auto">
+                <option value="">-- View Reports --</option>
+                <option value="weekly" {% if period=='weekly' %}selected{% endif %}>Weekly</option>
+                <option value="monthly" {% if period=='monthly' %}selected{% endif %}>Monthly</option>
+            </select>
+
+        </form>
+
+        {% if not selected_category %}
+        <p class="mt-3 text-muted">Please select a category</p>
+        {% endif %}
+    </div>
+
+    <!-- GRAPH -->
+    {% if chart_data %}
+    <div class="card p-4 mb-4">
+        <h5 class="text-center">Complaint Report ({{ period }})</h5>
+        <canvas id="myChart"></canvas>
+    </div>
+    {% endif %}
+
+    <!-- TABLE -->
+    {% if grievances %}
+    <div class="card shadow p-3">
+        <table class="table table-bordered table-hover text-center">
+
+            <thead class="table-dark">
+                <tr>
+                    <th>ID</th>
+                    <th>Category</th>
+                    <th>Title</th>
+                    <th>Description</th>
+                    <th>Priority</th>
+                    <th>Status</th>
+                    <th>File</th>
+                    <th>Update</th>
+                </tr>
+            </thead>
+
+            <tbody>
+                {% for g in grievances %}
+                <tr {% if g.priority=='Emergency' %}style="background:#ffe6e6;"{% endif %}>
+
+                    <td>{{ g.id }}</td>
+                    <td>{{ g.category }}</td>
+                    <td>{{ g.title }}</td>
+                    <td>{{ g.description }}</td>
+
+                    <td>
+                        {% if g.priority=='Emergency' %}
+                        <span class="badge bg-danger">🚨 Emergency</span>
+                        {% else %}
+                        <span class="badge bg-secondary">Normal</span>
+                        {% endif %}
+                    </td>
+
+                    <td>
+                        <span class="badge 
+                            {% if g.status=='Pending' %}bg-danger
+                            {% elif g.status=='In Progress' %}bg-warning text-dark
+                            {% else %}bg-success{% endif %}">
+                            {{ g.status }}
+                        </span>
+                    </td>
+
+                    <td>
+                        {% if g.file_path %}
+                        <a href="{{ url_for('static', filename='uploads/' + g.file_path) }}" target="_blank">View</a>
+                        {% else %}
+                        No File
+                        {% endif %}
+                    </td>
+
+                    <td>
+                        <form method="POST" action="/update/{{ g.id }}" class="d-flex">
+                            <select name="status" class="form-select me-2">
+                                <option {% if g.status=='Pending' %}selected{% endif %}>Pending</option>
+                                <option {% if g.status=='In Progress' %}selected{% endif %}>In Progress</option>
+                                <option {% if g.status=='Resolved' %}selected{% endif %}>Resolved</option>
+                            </select>
+                            <button class="btn btn-primary btn-sm">Update</button>
+                        </form>
+                    </td>
+
+                </tr>
+                {% endfor %}
+            </tbody>
+
+        </table>
+    </div>
+    {% else %}
+    <p class="text-center text-muted">No complaints found</p>
+    {% endif %}
+
+</div>
+
+<!-- CHART -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+{% if chart_data %}
+<script>
+const labels = [{% for row in chart_data %}"{{ row.label }}",{% endfor %}];
+const pending = [{% for row in chart_data %}{{ row.pending or 0 }},{% endfor %}];
+const progress = [{% for row in chart_data %}{{ row.progress or 0 }},{% endfor %}];
+const resolved = [{% for row in chart_data %}{{ row.resolved or 0 }},{% endfor %}];
+
+new Chart(document.getElementById("myChart"), {
+    type: 'bar',
+    data: {
+        labels: labels,
+        datasets: [
+            { label: 'Pending', data: pending, backgroundColor:'#e74c3c' },
+            { label: 'In Progress', data: progress, backgroundColor:'#f39c12' },
+            { label: 'Resolved', data: resolved, backgroundColor:'#27ae60' }  // ✅ FIXED
+        ]
+    }
+});
+</script>
+{% endif %}
+
+</body>
+</html>

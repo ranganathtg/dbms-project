@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Submit Grievance</title>
+
+    <!-- Bootstrap (optional but improves UI) -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <!-- CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+
+<body class="bg-light">
+
+<!-- 🌐 Language switch -->
+<div style="text-align:right; padding:10px;">
+    <a href="/set_language/en">English</a> |
+    <a href="/set_language/kn">ಕನ್ನಡ</a>
+</div>
+
+<div class="container d-flex justify-content-center mt-5">
+
+<div class="card p-4 shadow" style="width: 500px;">
+
+    <h2 class="text-center mb-3">{{ t['submit'] }}</h2>
+
+    <form method="POST" enctype="multipart/form-data">
+
+        <!-- ✅ Category -->
+        <div class="mb-3">
+            <select name="category" class="form-select" required>
+                <option value="">Select Problem Type</option>
+                <option value="Water">Water Problem</option>
+                <option value="Road">Road Problem</option>
+                <option value="Electricity">Electricity</option>
+                <option value="Garbage">Garbage</option>
+                <option value="Other">Other</option>
+            </select>
+        </div>
+
+        <!-- Title -->
+        <div class="mb-3">
+            <input type="text" name="title" class="form-control"
+                placeholder="{{ t['title'] }}" required>
+        </div>
+
+        <!-- ✅ ONLY ONE Description (Textarea) -->
+        <div class="mb-3">
+            <textarea id="description" name="description" class="form-control"
+                placeholder="{{ t['description'] }}" rows="3" required></textarea>
+        </div>
+
+        <!-- 🎤 Voice Button -->
+        <button type="button" onclick="startVoice()" class="btn btn-secondary w-100 mb-2">
+            🎤 Speak Complaint
+        </button>
+
+        <p id="voiceStatus" class="text-center text-muted" style="font-size:12px;"></p>
+
+        <!-- Priority -->
+        <div class="mb-3">
+            <select name="priority" class="form-select">
+                <option value="Normal">Normal</option>
+                <option value="Emergency">🚨 Emergency</option>
+            </select>
+        </div>
+
+        <!-- File Upload -->
+        <div class="mb-3">
+            <input type="file" name="file" class="form-control">
+        </div>
+        
+
+<p style="color:red; font-size:14px; margin-top:5px;">
+    ⚠ Please upload a geotagged photo or video
+</p>
+
+        <!-- Submit -->
+        <button type="submit" class="btn btn-primary w-100">
+            {{ t['submit'] }}
+        </button>
+
+    </form>
+
+    <br>
+    <a href="/dashboard" class="btn btn-outline-secondary w-100">
+        ← Back to Dashboard
+    </a>
+
+</div>
+</div>
+
+<!-- 🎤 Voice Script -->
+<script>
+function startVoice() {
+
+    const status = document.getElementById("voiceStatus");
+
+    if (!('webkitSpeechRecognition' in window)) {
+        alert("Voice recognition not supported in this browser (Use Chrome)");
+        return;
+    }
+
+    const recognition = new webkitSpeechRecognition();
+
+    // ✅ Language support (Kannada + English)
+    let lang = "{{ session.get('lang') }}";
+    if (lang === "kn") {
+        recognition.lang = "kn-IN";   // Kannada
+    } else {
+        recognition.lang = "en-IN";   // English
+    }
+
+    recognition.interimResults = false;
+
+    recognition.onstart = function () {
+        status.innerText = "🎤 Listening...";
+    };
+
+    recognition.onresult = function (event) {
+        let speech = event.results[0][0].transcript;
+
+        // ✅ Append instead of replace
+        let descBox = document.getElementById("description");
+        descBox.value = descBox.value + " " + speech;
+
+        status.innerText = "✔ Speech captured";
+    };
+
+    recognition.onerror = function () {
+        status.innerText = "❌ Error occurred";
+    };
+
+    recognition.onend = function () {
+        status.innerText += " (Stopped)";
+    };
+
+    recognition.start();
+}
+</script>
+
+</body>
+</html>
