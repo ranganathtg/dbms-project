@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <title>User Dashboard</title>
 
@@ -9,120 +10,126 @@
 
 <body>
 
-<div class="top-header">
+    <div class="top-header">
 
-    <!-- Left: Logo -->
-    <div class="logo">
-        <img src="{{ url_for('static', filename='images/logo.jpeg') }}" alt="logo">
+        <!-- Left: Logo -->
+        <div class="logo">
+            <img src="{{ url_for('static', filename='images/logo.jpeg') }}" alt="logo">
+        </div>
+
+        <!-- Center: Title -->
+        <div class="title">
+            GrievTech
+        </div>
+
+        <!-- Right: Language -->
+        <div class="lang">
+            <select onchange="location = this.value;" class="form-select form-select-sm d-inline-block w-auto"
+                style="border-radius: 8px; padding: 4px 8px;">
+                <option value="/set_language/en" {% if lang=='en' %}selected{% endif %}>English</option>
+                <option value="/set_language/kn" {% if lang=='kn' %}selected{% endif %}>ಕನ್ನಡ</option>
+                <option value="/set_language/hi" {% if lang=='hi' %}selected{% endif %}>हिंदी</option>
+                <option value="/set_language/ta" {% if lang=='ta' %}selected{% endif %}>தமிழ்</option>
+                <option value="/set_language/te" {% if lang=='te' %}selected{% endif %}>తెలుగు</option>
+            </select>
+        </div>
+
     </div>
+    <div class="dashboard-container">
 
-    <!-- Center: Title -->
-    <div class="title">
-        GrievTech
-    </div>
+        <!-- 🔹 Title -->
+        <h2>{{ _('dashboard') }}</h2>
 
-    <!-- Right: Language -->
-    <div class="lang">
-        <a href="/set_language/en">English</a> |
-        <a href="/set_language/kn">ಕನ್ನಡ</a>
-    </div>
+        <!-- 🔹 Actions -->
+        <div class="actions">
+            <a href="/submit" class="btn">{{ _('submit') }}</a>
+            <a href="/logout" class="btn logout">{{ _('logout') }}</a>
+        </div>
 
-</div>
-<div class="dashboard-container">
+        <!-- 🔥 FIXED: Added glass-card + responsive -->
+        <div class="table-box glass-card">
 
-    <!-- 🔹 Title -->
-    <h2>{{ t['dashboard'] }}</h2>
+            <div style="overflow-x:auto;">
+                <table>
+                    <tr>
+                        <th>{{ _('category') }}</th>
+                        <th>{{ _('title') }}</th>
+                        <th>{{ _('description') }}</th>
+                        <th>{{ _('status') }}</th>
+                        <th>{{ _('created') }}</th>
+                        <th>{{ _('resolved') }}</th>
+                        <th>{{ _('file') }}</th>
+                    </tr>
 
-    <!-- 🔹 Actions -->
-    <div class="actions">
-        <a href="/submit" class="btn">{{ t['submit'] }}</a>
-        <a href="/logout" class="btn logout">{{ t['logout'] }}</a>
-    </div>
+                    {% for g in grievances %}
+                    <tr class="{{ 'emergency-row' if g.priority == 'Emergency' else '' }}">
 
-    <!-- 🔥 FIXED: Added glass-card + responsive -->
-    <div class="table-box glass-card">
+                        <td>{{ g.category }}</td>
+                        <td>{{ g.title }}</td>
+                        <td>{{ g.description }}</td>
 
-        <div style="overflow-x:auto;">
-            <table>
-                <tr>
-                    <th>Category</th>
-                    <th>{{ t['title'] }}</th>
-                    <th>{{ t['description'] }}</th>
-                    <th>{{ t['status'] }}</th>
-                    <th>Created</th>
-                    <th>Resolved</th>
-                    <th>File</th>
-                </tr>
+                        <!-- 🔹 STATUS -->
+                        <td>
+                            <span
+                                class="status {{ 'pending' if g.status == 'Pending' else ('progress' if g.status == 'In Progress' else 'resolved') }}">
+                                {{ _('pending') if g.status=='Pending' else (_('in_progress') if g.status=='In Progress'
+                                else _('resolved')) }}
+                            </span>
+                        </td>
 
-                {% for g in grievances %}
-                <tr {% if g.priority == 'Emergency' %}style="background-color: rgba(255,0,0,0.1);"{% endif %}>
-
-                    <td>{{ g.category }}</td>
-                    <td>{{ g.title }}</td>
-                    <td>{{ g.description }}</td>
-
-                    <!-- 🔹 STATUS -->
-                    <td>
-                        <span class="status 
-                            {% if g.status == 'Pending' %}pending
-                            {% elif g.status == 'In Progress' %}progress
-                            {% else %}resolved
-                            {% endif %}
-                        ">
-                            {{ g.status }}
-                        </span>
-                    </td>
-
-                    <!-- 🔹 CREATED -->
-                    <td>
-                        {% if g.created_at %}
+                        <!-- 🔹 CREATED -->
+                        <td>
+                            {% if g.created_at %}
                             {{ g.created_at.strftime('%d-%m-%Y %H:%M') }}
-                        {% else %}
+                            {% else %}
                             -
-                        {% endif %}
-                    </td>
+                            {% endif %}
+                        </td>
 
-                    <!-- 🔹 RESOLVED -->
-                    <td>
-                        {% if g.resolved_at %}
+                        <!-- 🔹 RESOLVED -->
+                        <td>
+                            {% if g.resolved_at %}
                             {{ g.resolved_at.strftime('%d-%m-%Y') }}
-                        {% else %}
+                            {% else %}
                             <span style="color:gray;">Not yet</span>
-                        {% endif %}
-                    </td>
+                            {% endif %}
+                        </td>
 
-                    <!-- 🔹 FILE -->
-                    <td>
-                        {% if g.file_path %}
-                            
-                            {% if g.file_path.endswith('.jpg') or g.file_path.endswith('.png') or g.file_path.endswith('.jpeg') %}
-                                <img src="{{ url_for('static', filename='uploads/' + g.file_path) }}" width="80" style="border-radius:8px;">
+                        <!-- 🔹 FILE -->
+                        <td>
+                            {% if g.file_path %}
+
+                            {% if g.file_path.endswith('.jpg') or g.file_path.endswith('.png') or
+                            g.file_path.endswith('.jpeg') %}
+                            <img src="{{ url_for('static', filename='uploads/' + g.file_path) }}" width="80"
+                                style="border-radius:8px;">
 
                             {% elif g.file_path.endswith('.mp4') %}
-                                <video width="100" controls style="border-radius:8px;">
-                                    <source src="{{ url_for('static', filename='uploads/' + g.file_path) }}">
-                                </video>
+                            <video width="100" controls style="border-radius:8px;">
+                                <source src="{{ url_for('static', filename='uploads/' + g.file_path) }}">
+                            </video>
 
                             {% else %}
-                                <a href="{{ url_for('static', filename='uploads/' + g.file_path) }}" target="_blank">
-                                    View File
-                                </a>
+                            <a href="{{ url_for('static', filename='uploads/' + g.file_path) }}" target="_blank">
+                                View File
+                            </a>
                             {% endif %}
 
-                        {% else %}
+                            {% else %}
                             <span style="color:gray;">No File</span>
-                        {% endif %}
-                    </td>
+                            {% endif %}
+                        </td>
 
-                </tr>
-                {% endfor %}
+                    </tr>
+                    {% endfor %}
 
-            </table>
+                </table>
+            </div>
+
         </div>
 
     </div>
 
-</div>
-
 </body>
+
 </html>

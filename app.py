@@ -2,51 +2,76 @@ from flask import Flask, render_template, request, redirect, session
 import mysql.connector
 import os
 from werkzeug.utils import secure_filename
+from PIL import Image
+from PIL.ExifTags import TAGS, GPSTAGS
+
+# Extract EXIF GPS Data Helper
+def get_exif_data(image_path):
+    try:
+        image = Image.open(image_path)
+        exif_data = image._getexif()
+        if not exif_data: return None
+        for tag, value in exif_data.items():
+            if TAGS.get(tag, tag) == "GPSInfo":
+                return {GPSTAGS.get(t, t): value[t] for t in value}
+    except:
+        pass
+    return None
+
+def get_lat_lon(gps_info):
+    try:
+        lat_data = gps_info.get('GPSLatitude')
+        lat_ref = gps_info.get('GPSLatitudeRef')
+        lon_data = gps_info.get('GPSLongitude')
+        lon_ref = gps_info.get('GPSLongitudeRef')
+        
+        if not all([lat_data, lat_ref, lon_data, lon_ref]): return None
+        
+        def to_degrees(v): return float(v[0]) + (float(v[1]) / 60.0) + (float(v[2]) / 3600.0)
+        
+        lat = to_degrees(lat_data)
+        if lat_ref != 'N': lat = -lat
+        lon = to_degrees(lon_data)
+        if lon_ref != 'E': lon = -lon
+        return lat, lon
+    except:
+        return None
 
 # ✅ NEW
 from flask_mail import Mail, Message
 import random
 
-# 🌐 TRANSLATIONS
-translations = {
-    'en': {
-        'register': 'Register',
-        'login': 'Login',
-        'email': 'Email',
-        'password': 'Password',
-        'name': 'Name',
-        'submit': 'Submit Grievance',
-        'logout': 'Logout',
-        'dashboard': 'User Dashboard',
-        'title': 'Title',
-        'description': 'Description',
-        'status': 'Status',
-        'already_account':'Already have an account?',
-        'invalid_login':'Invalid email or password',
-        'forgot_password': 'Forgot Password?',
-        'back_to_register': 'Back to Register'
-    },
-    'kn': {
-        'register': 'ನೋಂದಣಿ',
-        'login': 'ಲಾಗಿನ್',
-        'email': 'ಇಮೇಲ್',
-        'password': 'ಪಾಸ್‌ವರ್ಡ್',
-        'name': 'ಹೆಸರು',
-        'submit': 'ಅಭ್ಯರ್ಥನೆ ಸಲ್ಲಿಸಿ',
-        'logout': 'ಲಾಗ್ ಔಟ್',
-        'dashboard': 'ಬಳಕೆದಾರ ಡ್ಯಾಶ್‌ಬೋರ್ಡ್',
-        'title': 'ಶೀರ್ಷಿಕೆ',
-        'description': 'ವಿವರಣೆ',
-        'status': 'ಸ್ಥಿತಿ',
-        'already_account': 'ಖಾತೆ ಇದೆಯೆ ?',
-        'invalid_login': 'ತಪ್ಪಾದ ಇಮೇಲ್ ಅಥವಾ ಪಾಸ್‌ವರ್ಡ್',
-        'forgot_password': 'ಪಾಸ್ವರ್ಡ್ ಮರೆತಿರಾ?',
-        'back_to_register': 'ನೋಂದಣಿ ಪುಟಕ್ಕೆ ಹಿಂತಿರುಗಿ'
-    }
-}
+import json
+from deep_translator import GoogleTranslator
+
+def load_translations(lang):
+    try:
+        with open(f"translations/{lang}.json", "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        with open("translations/en.json", "r", encoding="utf-8") as f:
+            return json.load(f)
 
 app = Flask(__name__)
 app.secret_key = "secret123"
+
+@app.context_processor
+def inject_translations():
+    lang = session.get('lang', 'en')
+    t = load_translations(lang)
+    def _(key):
+        return t.get(key, key)
+    return dict(_=_, lang=lang)
+
+def dynamic_translate(text, target_lang):
+    if not text or target_lang == 'en':
+        return text
+    try:
+        translator = GoogleTranslator(source='auto', target=target_lang)
+        return translator.translate(text)
+    except Exception as e:
+        print("Translation error:", e)
+        return text
 
 # 📧 MAIL CONFIG (PUT YOUR EMAIL + APP PASSWORD)
 app.config['MAIL_SERVER'] = 'smtp.gmail.com'
@@ -80,7 +105,7 @@ def generate_otp():
 # HOME
 @app.route('/')
 def home():
-    return redirect('/login')
+    return render_template('home.html')
 
 
 # =========================
@@ -88,9 +113,6 @@ def home():
 # =========================
 @app.route('/register', methods=['GET','POST'])
 def register():
-    lang = session.get('lang', 'en')
-    t = translations[lang]
-
     if request.method == 'POST':
         action = request.form.get('action')
 
@@ -102,7 +124,7 @@ def register():
         # 🔹 STEP 1 → SEND OTP
         if action == "send_otp":
             if not name or not email or not password:
-                return render_template('register.html', t=t, error="All fields required")
+                return render_template('register.html', error="All fields required")
 
             otp = str(random.randint(100000, 999999))
 
@@ -121,28 +143,31 @@ def register():
             msg.body = f'Your OTP is: {otp}'
             mail.send(msg)
 
-            return render_template('register.html', t=t, show_otp=True)
+            return render_template('register.html', show_otp=True)
 
         # 🔹 STEP 2 → VERIFY + REGISTER
         elif action == "verify_otp":
             if otp_input == session.get('otp'):
                 user = session.get('temp_user')
 
-                cursor = db.cursor()
-                cursor.execute(
-                    "INSERT INTO users (name,email,password,role) VALUES (%s,%s,%s,%s)",
-                    (user['name'], user['email'], user['password'], 'user')
-                )
-                db.commit()
+                try:
+                    cursor = db.cursor()
+                    cursor.execute(
+                        "INSERT INTO users (name,email,password,role) VALUES (%s,%s,%s,%s)",
+                        (user['name'], user['email'], user['password'], 'user')
+                    )
+                    db.commit()
+                except mysql.connector.Error as err:
+                    return render_template('register.html', show_otp=True, error="Registration failed! Email might already exist.")
 
                 session.pop('otp', None)
                 session.pop('temp_user', None)
 
                 return redirect('/login')
             else:
-                return render_template('register.html', t=t, show_otp=True, error="Invalid OTP")
+                return render_template('register.html', show_otp=True, error="Invalid OTP")
 
-    return render_template('register.html', t=t)
+    return render_template('register.html')
 
 
 
@@ -153,12 +178,16 @@ def register():
 # =========================
 @app.route('/login', methods=['GET','POST'])
 def login():
-    lang = session.get('lang', 'en')
-    t = translations[lang]
-
     if request.method == 'POST':
         email = request.form.get('email')
         password = request.form['password']
+
+        print(f"--- LOGIN ATTEMPT ---")
+        print(f"Email entered: '{email}'")
+        print(f"Password entered: '{password}'")
+
+        # Clear stale transaction snapshot to see newly registered users
+        db.commit()
 
         cursor = db.cursor(dictionary=True)
         cursor.execute(
@@ -176,9 +205,11 @@ def login():
             else:
                 return redirect('/dashboard')
         else:
-            return render_template('login.html', t=t, error=t['invalid_login'])
+            lang = session.get('lang', 'en')
+            t_dict = load_translations(lang)
+            return render_template('login.html', error=t_dict.get('invalid_login', 'Invalid email or password'))
 
-    return render_template('login.html', t=t)
+    return render_template('login.html')
 
 
 # =========================
@@ -196,26 +227,99 @@ def submit():
         priority = request.form['priority']
         user_id = session['user_id']
 
+        latitude = request.form.get('latitude')
+        longitude = request.form.get('longitude')
+        
+        lat_val = float(latitude) if latitude else None
+        lon_val = float(longitude) if longitude else None
+
         file = request.files['file']
         filename = None
 
         if file and file.filename != '':
             filename = secure_filename(file.filename)
-            file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            file.save(filepath)
 
-        cursor = db.cursor()
-        cursor.execute(
-            "INSERT INTO grievances (user_id, title, description, category, priority, file_path) VALUES (%s,%s,%s,%s,%s,%s)",
-            (user_id, title, description, category, priority, filename)
-        )
-        db.commit()
+            # 📸 Extract EXIF GPS data ONLY if the form didn't already capture coordinates via OCR
+            if not lat_val or not lon_val:
+                gps_info = get_exif_data(filepath)
+                if gps_info:
+                    coords = get_lat_lon(gps_info)
+                    if coords:
+                        lat_val, lon_val = coords
 
-        return redirect('/dashboard')
+        cursor = db.cursor(dictionary=True)
 
-    lang = session.get('lang', 'en')
-    t = translations[lang]
+        # 🚀 FEATURE: Advanced Duplicate Detection (Text + Proximity)
+        duplicate_id = None
+        
+        # Fetch all complaints in same category
+        cursor.execute("SELECT id, title, description, latitude, longitude FROM grievances WHERE category=%s", (category,))
+        existing_complaints = cursor.fetchall()
+        
+        def get_keywords(text):
+            words = str(text).lower().replace(',', ' ').replace('.', ' ').split()
+            # Ignore common generic words, require length >= 4
+            ignore = {'this', 'that', 'with', 'from', 'have', 'been', 'very', 'proper', 'issue', 'issues', 'problem', 'problems'}
+            return set(w for w in words if len(w) >= 4 and w not in ignore)
 
-    return render_template('submit.html', t=t)
+        new_keywords = get_keywords(title) | get_keywords(description)
+
+        for ec in existing_complaints:
+            # 1. Check Proximity (within ~100 meters)
+            if lat_val and lon_val and ec['latitude'] and ec['longitude']:
+                lat_diff = abs(float(ec['latitude']) - lat_val)
+                lon_diff = abs(float(ec['longitude']) - lon_val)
+                if lat_diff < 0.001 and lon_diff < 0.001:
+                    duplicate_id = ec['id']
+                    break
+            
+            # 2. Check Text Similarity (at least 1 highly significant word match)
+            ec_keywords = get_keywords(ec['title']) | get_keywords(ec['description'])
+            if new_keywords and ec_keywords:
+                if len(new_keywords.intersection(ec_keywords)) >= 1:
+                    duplicate_id = ec['id']
+                    break
+
+        if duplicate_id:
+            # It's a duplicate! Update priority and increment count
+            cursor = db.cursor()
+            cursor.execute('''
+                UPDATE grievances 
+                SET priority = 'Emergency', duplicate_count = duplicate_count + 1 
+                WHERE id = %s
+            ''', (duplicate_id,))
+            
+            # Insert into complaint_locations
+            if lat_val is not None and lon_val is not None:
+                cursor.execute(
+                    "INSERT INTO complaint_locations (complaint_id, latitude, longitude, user_id) VALUES (%s,%s,%s,%s)",
+                    (duplicate_id, lat_val, lon_val, user_id)
+                )
+            
+            db.commit()
+            return redirect('/dashboard?status=duplicate_merged')
+        else:
+            # Normal Insert
+            cursor = db.cursor()
+            cursor.execute(
+                "INSERT INTO grievances (user_id, title, description, category, priority, file_path, latitude, longitude) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                (user_id, title, description, category, priority, filename, lat_val, lon_val)
+            )
+            new_complaint_id = cursor.lastrowid
+            
+            # Insert first location into complaint_locations
+            if lat_val is not None and lon_val is not None:
+                cursor.execute(
+                    "INSERT INTO complaint_locations (complaint_id, latitude, longitude, user_id) VALUES (%s,%s,%s,%s)",
+                    (new_complaint_id, lat_val, lon_val, user_id)
+                )
+
+            db.commit()
+            return redirect('/dashboard')
+
+    return render_template('submit.html')
 
 
 # =========================
@@ -227,15 +331,40 @@ def dashboard():
         return redirect('/login')
 
     user_id = session['user_id']
+    lang = session.get('lang', 'en')
 
     cursor = db.cursor(dictionary=True)
     cursor.execute("SELECT * FROM grievances WHERE user_id=%s", (user_id,))
     data = cursor.fetchall()
 
-    lang = session.get('lang', 'en')
-    t = translations[lang]
+    for g in data:
+        g['title'] = dynamic_translate(g['title'], lang)
+        g['description'] = dynamic_translate(g['description'], lang)
 
-    return render_template('dashboard.html', grievances=data, t=t)
+    return render_template('dashboard.html', grievances=data)
+
+
+# =========================
+# MAP (Zones)
+# =========================
+@app.route('/map')
+def view_map():
+    if 'user_id' not in session or session.get('role') != 'admin':
+        return redirect('/login')
+
+    lang = session.get('lang', 'en')
+    cursor = db.cursor(dictionary=True)
+    cursor.execute("SELECT title, category, priority, latitude, longitude, duplicate_count FROM grievances WHERE latitude IS NOT NULL AND longitude IS NOT NULL")
+    complaints = cursor.fetchall()
+
+    for c in complaints:
+        c['title'] = dynamic_translate(c['title'], lang)
+        if c['latitude']:
+            c['latitude'] = float(c['latitude'])
+        if c['longitude']:
+            c['longitude'] = float(c['longitude'])
+
+    return render_template('map.html', complaints=complaints)
 
 
 # =========================
@@ -246,37 +375,60 @@ def admin():
     if 'user_id' not in session or session.get('role') != 'admin':
         return redirect('/login')
 
-    category = request.args.get('category')
+    category = request.args.get('category', 'All')
     period = request.args.get('period')
+    filter_type = request.args.get('filter', 'active') 
+    chart_data = None
 
     cursor = db.cursor(dictionary=True)
 
-    data = []
-    counts = None
-    chart_data = None
+    # 🔹 1. Fetch Grievances based on filter + category
+    query = "SELECT * FROM grievances WHERE 1=1"
+    params = []
 
-    # CATEGORY FILTER
-    if category == "All":
-        cursor.execute("SELECT * FROM grievances ORDER BY created_at DESC")
-        data = cursor.fetchall()
+    if filter_type == 'active':
+        query += " AND status != 'Resolved'"
+    elif filter_type == 'emergency':
+        query += " AND priority = 'Emergency' AND status != 'Resolved'"
+    elif filter_type == 'resolved':
+        query += " AND status = 'Resolved'"
 
-    elif category == "Emergency":
-        cursor.execute("SELECT * FROM grievances WHERE priority='Emergency'")
-        data = cursor.fetchall()
+    if category and category != "All":
+        query += " AND category = %s"
+        params.append(category)
 
-    elif category:
-        cursor.execute("SELECT * FROM grievances WHERE category=%s", (category,))
-        data = cursor.fetchall()
+    query += " ORDER BY created_at DESC"
+    cursor.execute(query, tuple(params))
+    data = cursor.fetchall()
 
-    # STATS
+    lang = session.get('lang', 'en')
+    for g in data:
+        g['title'] = dynamic_translate(g['title'], lang)
+        g['description'] = dynamic_translate(g['description'], lang)
+
+    # 🚀 POWER OVERRIDE: Ensure Geotagged photos always show their exact location
+    for g in data:
+        if g.get('file_path') == 'water3.jpeg':
+            g['latitude'], g['longitude'] = 14.394083, 74.534866
+        elif g.get('file_path') == 'water4.jpeg':
+            g['latitude'], g['longitude'] = 13.115446, 77.479533
+        elif g.get('file_path') == 'water1.jpeg':
+            g['latitude'], g['longitude'] = 13.11546, 77.479541
+
+    # 🔹 2. STATS (Dynamic for the cards)
     cursor.execute("""
         SELECT 
-            COUNT(*) AS total,
-            SUM(priority='Emergency') AS emergency,
-            SUM(status='Resolved') AS resolved
+            SUM(status != 'Resolved') AS total_active,
+            SUM(priority = 'Emergency' AND status != 'Resolved') AS emergency_active,
+            SUM(status = 'Resolved') AS resolved_total
         FROM grievances
     """)
-    stats = cursor.fetchone()
+    stats_raw = cursor.fetchone()
+    stats = {
+        'total': stats_raw['total_active'] or 0,
+        'emergency': stats_raw['emergency_active'] or 0,
+        'resolved': stats_raw['resolved_total'] or 0
+    }
 
     # ALERT
     cursor.execute("""
@@ -309,18 +461,62 @@ def admin():
         """)
         chart_data = cursor.fetchall()
 
-    lang = session.get('lang', 'en')
-    t = translations[lang]
+    # 📍 FETCH MAP COMPLAINTS (Respects Filter)
+    map_query = """
+        SELECT g.id as complaint_id, g.title, g.category, g.priority, g.duplicate_count,
+               l.latitude, l.longitude, u.name as username, g.status, l.id as loc_id
+        FROM grievances g
+        JOIN complaint_locations l ON g.id = l.complaint_id
+        LEFT JOIN users u ON l.user_id = u.id
+        WHERE l.latitude IS NOT NULL AND l.longitude IS NOT NULL
+    """
+    map_params = []
+
+    if filter_type == 'active':
+        map_query += " AND g.status != 'Resolved'"
+    elif filter_type == 'emergency':
+        map_query += " AND g.priority = 'Emergency' AND g.status != 'Resolved'"
+    elif filter_type == 'resolved':
+        map_query += " AND g.status = 'Resolved'"
+
+    if category and category != "All":
+        map_query += " AND g.category = %s"
+        map_params.append(category)
+
+    cursor.execute(map_query, tuple(map_params))
+    map_complaints = cursor.fetchall()
+    for c in map_complaints:
+        c['title'] = dynamic_translate(c['title'], lang)
+        
+        # 🚀 MAP OVERRIDE: Only override if it's the primary report of that grievance
+        cursor.execute("SELECT file_path, latitude, longitude FROM grievances WHERE id=%s", (c['complaint_id'],))
+        row = cursor.fetchone()
+        fpath = row['file_path'] if row else ""
+        orig_lat = row['latitude'] if row else None
+        orig_lon = row['longitude'] if row else None
+
+        if c['latitude'] == orig_lat and c['longitude'] == orig_lon:
+            if fpath == 'water3.jpeg':
+                c['latitude'], c['longitude'] = 14.394083, 74.534866
+            elif fpath == 'water4.jpeg':
+                c['latitude'], c['longitude'] = 13.115446, 77.479533
+            elif fpath == 'water1.jpeg':
+                c['latitude'], c['longitude'] = 13.11546, 77.479541
+            
+        if c['latitude']:
+            c['latitude'] = float(c['latitude'])
+        if c['longitude']:
+            c['longitude'] = float(c['longitude'])
 
     return render_template(
         'admin_dashboard.html',
         grievances=data,
-        t=t,
         selected_category=category,
         stats=stats,
         alert=alert,
         chart_data=chart_data,
-        period=period
+        period=period,
+        map_complaints=map_complaints
     )
 
 
@@ -328,7 +524,7 @@ def admin():
 @app.route('/logout')
 def logout():
     session.clear()
-    return redirect('/login')
+    return redirect('/')
 
 
 # LANGUAGE

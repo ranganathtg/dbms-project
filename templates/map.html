@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Grievance Map Zones</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+    <style>
+        #map {
+            height: 80vh;
+            width: 100%;
+            border-radius: 12px;
+        }
+
+        /* Green < 5 */
+        .marker-cluster-small {
+            background-color: rgba(46, 204, 113, 0.6);
+        }
+
+        .marker-cluster-small div {
+            background-color: rgba(39, 174, 96, 0.9);
+            color: white;
+            font-weight: bold;
+        }
+
+        /* Orange 5-9 */
+        .marker-cluster-medium {
+            background-color: rgba(243, 156, 18, 0.6);
+        }
+
+        .marker-cluster-medium div {
+            background-color: rgba(211, 84, 0, 0.9);
+            color: white;
+            font-weight: bold;
+        }
+
+        /* Red >= 10 */
+        .marker-cluster-large {
+            background-color: rgba(231, 76, 60, 0.6);
+        }
+
+        .marker-cluster-large div {
+            background-color: rgba(192, 57, 43, 0.9);
+            color: white;
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body class="bg-light">
+
+    <div class="container mt-4">
+        <h2 class="text-center">Complaint Heatmap & Zones</h2>
+        <div class="d-flex justify-content-between mb-2">
+            <a href="/admin" class="btn btn-outline-secondary">← Back to Admin</a>
+            <div>
+                <span class="badge bg-success">{{ _('green_zone') }}</span>
+                <span class="badge bg-warning text-dark">{{ _('orange_zone') }}</span>
+                <span class="badge bg-danger">{{ _('red_zone') }}</span>
+            </div>
+        </div>
+
+        <div class="card p-3 shadow">
+            <div id="map"></div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
+    <!-- Safely pass data to JS without VS Code warnings -->
+    <script id="complaints-data" type="application/json">
+    {{ complaints | tojson | safe }}
+</script>
+
+    <script>
+        var map = L.map('map').setView([12.9716, 77.5946], 11);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+
+        var complaints = JSON.parse(document.getElementById('complaints-data').textContent);
+
+        // Configure cluster colors based on duplicate_counts
+        var markers = L.markerClusterGroup({
+            iconCreateFunction: function (cluster) {
+                var allMarkers = cluster.getAllChildMarkers();
+                var totalComplaints = 0;
+
+                for (var i = 0; i < allMarkers.length; i++) {
+                    totalComplaints += (allMarkers[i].options.duplicate_count || 0) + 1;
+                }
+
+                var c = ' marker-cluster-';
+                if (totalComplaints >= 10) {
+                    c += 'large';
+                } else if (totalComplaints >= 5) {
+                    c += 'medium';
+                } else {
+                    c += 'small';
+                }
+                return new L.DivIcon({
+                    html: '<div><span>' + totalComplaints + '</span></div>',
+                    className: 'marker-cluster' + c,
+                    iconSize: new L.Point(40, 40)
+                });
+            }
+        });
+
+        var latLngs = [];
+
+        complaints.forEach(function (c) {
+            if (c.latitude && c.longitude) {
+                // Create individual markers
+                var marker = L.marker([c.latitude, c.longitude], {
+                    duplicate_count: c.duplicate_count || 0
+                });
+                var total = (c.duplicate_count || 0) + 1;
+                marker.bindPopup(`<b>${c.title}</b><br>${c.category}<br>Total Similar Instances: ${total}<br>Priority: ${c.priority}`);
+                markers.addLayer(marker);
+                latLngs.push([c.latitude, c.longitude]);
+            }
+        });
+
+        map.addLayer(markers);
+
+        if (latLngs.length > 0) {
+            map.fitBounds(latLngs);
+        }
+    </script>
+
+</body>
+
+</html>

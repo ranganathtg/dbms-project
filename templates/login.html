@@ -1,13 +1,13 @@
 <!DOCTYPE html>
 <html>
+
 <head>
-    <title>{{ t['login'] }}</title>
+    <title>{{ _('login') }}</title>
 
     <!-- Bootstrap -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <style>
-      
         .card {
             border-radius: 12px;
         }
@@ -16,76 +16,90 @@
 
 <body>
 
-<div class="top-header">
+    <div class="top-header">
 
-    <!-- Left: Logo -->
-    <div class="logo">
-        <img src="{{ url_for('static', filename='images/logo.jpeg') }}" alt="logo">
-    </div>
-
-    <!-- Center: Title -->
-    <div class="title">
-        GrievTech
-    </div>
-
-    <!-- Right: Language -->
-    <div class="lang">
-        <a href="/set_language/en">English</a> |
-        <a href="/set_language/kn">ಕನ್ನಡ</a>
-    </div>
-
-</div>
-<div class="container d-flex justify-content-center align-items-center vh-100">
-
-    <div class="form-container glass-card" style="width: 350px;">
-
-        <!-- 🔹 Title -->
-        <h3 class="text-center mb-3">{{ t['login'] }}</h3>
-
-        <!-- 🔹 Error Message -->
-        {% if error %}
-        <div class="alert alert-danger text-center">
-            {{ error }}
+        <!-- Left: Logo -->
+        <div class="logo">
+            <img src="{{ url_for('static', filename='images/logo.jpeg') }}" alt="logo">
         </div>
-        {% endif %}
 
-        <!-- 🔹 Form -->
-        <form method="POST" action="/login">
+        <!-- Center: Title -->
+        <div class="title">
+            GrievTech
+        </div>
 
-            <div class="mb-3">
-                <input type="email" name="email" class="form-control"
-                       placeholder="{{ t['email'] }}" required>
-            </div>
-
-            <div class="mb-3">
-                <input type="password" name="password" class="form-control"
-                       placeholder="{{ t['password'] }}" required>
-            </div>
-
-            <button type="submit" class="btn btn-primary w-100">
-                {{ t['login'] }}
-            </button>
-
-        </form>
-
-        <!-- 🔹 Extra Options -->
-        <div class="text-center mt-3">
-
-            <!-- Forgot Password -->
-            <a href="/forgot-password" class="text-danger d-block mb-2">
-                {{ t['forgot_password'] }}
-            </a>
-
-            <!-- Back to Register -->
-            <a href="/register" class="btn btn-outline-secondary w-100">
-                {{ t['back_to_register'] }}
-            </a>
-
+        <!-- Right: Language -->
+        <div class="lang">
+            <select onchange="location = this.value;" class="form-select form-select-sm d-inline-block w-auto"
+                style="border-radius: 8px; padding: 4px 8px;">
+                <option value="/set_language/en" {% if lang=='en' %}selected{% endif %}>English</option>
+                <option value="/set_language/kn" {% if lang=='kn' %}selected{% endif %}>ಕನ್ನಡ</option>
+                <option value="/set_language/hi" {% if lang=='hi' %}selected{% endif %}>हिंदी</option>
+                <option value="/set_language/ta" {% if lang=='ta' %}selected{% endif %}>தமிழ்</option>
+                <option value="/set_language/te" {% if lang=='te' %}selected{% endif %}>తెలుగు</option>
+            </select>
         </div>
 
     </div>
+    <div class="container d-flex justify-content-center align-items-center vh-100">
 
-</div>
+        <div class="form-container glass-card" style="width: 350px;">
+
+            <!-- 🔹 Title -->
+            <h3 class="text-center mb-3">{{ _('login') }}</h3>
+
+            <!-- 🔹 Error Message -->
+            {% if error %}
+            <div class="alert alert-danger text-center">
+                {{ error }}
+            </div>
+            {% endif %}
+
+            <!-- 🔹 Form -->
+            <form method="POST" action="/login" autocomplete="off">
+
+                <div class="mb-3">
+                    <input type="email" name="email" class="form-control" placeholder="{{ _('email') }}"
+                        autocomplete="off" required>
+                </div>
+
+                <div class="mb-3">
+                    <input type="password" name="password" class="form-control" placeholder="{{ _('password') }}"
+                        autocomplete="new-password" required>
+                </div>
+
+                <button type="submit" class="btn btn-primary w-100">
+                    {{ _('login') }}
+                </button>
+
+            </form>
+
+            <!-- 🔹 Extra Options -->
+            <div class="text-center mt-3">
+
+                <!-- Forgot Password -->
+                <a href="/forgot-password" class="text-danger d-block mb-2">
+                    {{ _('forgot_password') }}
+                </a>
+
+                <!-- Back to Register -->
+                <a href="/register" class="btn btn-outline-secondary w-100">
+                    {{ _('back_to_register') }}
+                </a>
+
+                <!-- Back to Home -->
+                <div class="mt-2">
+                    <a href="/" class="small text-muted text-decoration-none">
+                        ← Back to Home
+                    </a>
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
 
 </body>
+
 </html>
