@@ -25,6 +25,26 @@ CREATE TABLE grievances (
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
+-- 🔹 CHATBOT LOGS
+CREATE TABLE IF NOT EXISTS chat_logs (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT,
+    user_message TEXT,
+    bot_response TEXT,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+-- 🔹 FEEDBACK & RATINGS
+CREATE TABLE IF NOT EXISTS feedback (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT,
+    rating INT CHECK (rating BETWEEN 1 AND 5),
+    message TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
 -- 🔹 COMPLAINT LOCATIONS (For Individual Merged Reports)
 CREATE TABLE complaint_locations (
     id INT AUTO_INCREMENT PRIMARY KEY,

@@ -317,7 +317,8 @@
                                 <th>#</th>
                                 <th>{{ _('reported_by') }}</th>
                                 <th>{{ _('problem_type') }}</th>
-                                <th>{{ _('action') }}</th>
+                                <th>📍 {{ _('trace') }}</th>
+                                <th>🔄 {{ _('update') }}</th>
                             </tr>
                         </thead>
                         <tbody id="modalReportsBody">
@@ -478,13 +479,23 @@
             <td><span class="badge bg-info text-dark">${c.category}</span></td>
             <td>
                 <div class="d-flex justify-content-center">
-                    <button type="button" class="btn btn-sm btn-outline-primary me-2 loc-trace-btn" data-loc-id="${c.loc_id}">
-                        📍 {{ _('trace') }}
+                    <button type="button" class="btn btn-sm btn-outline-primary me-1 loc-trace-btn" data-loc-id="${c.loc_id}">
+                        📍
                     </button>
                     <a href="https://www.google.com/maps/dir/?api=1&destination=${c.latitude},${c.longitude}" target="_blank" class="btn btn-sm btn-outline-success">
-                        🧭 {{ _('get_directions') }}
+                        🧭
                     </a>
                 </div>
+            </td>
+            <td>
+                <form method="POST" action="/update/${c.complaint_id}" class="d-flex align-items-center justify-content-center">
+                    <select name="status" class="form-select form-select-sm me-1" style="width: 100px; font-size: 0.7rem;">
+                        <option value="Pending" ${c.status === 'Pending' ? 'selected' : ''}>{{ _('pending') }}</option>
+                        <option value="In Progress" ${c.status === 'In Progress' ? 'selected' : ''}>In Progress</option>
+                        <option value="Resolved" ${c.status === 'Resolved' ? 'selected' : ''}>{{ _('resolved') }}</option>
+                    </select>
+                    <button type="submit" class="btn btn-sm btn-dark" style="font-size: 0.7rem;">{{ _('update') }}</button>
+                </form>
             </td>
         `;
                 tbody.appendChild(tr);

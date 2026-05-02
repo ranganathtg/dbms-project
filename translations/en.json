@@ -87,5 +87,19 @@
     "step3_desc": "Track the progress until the issue is resolved.",
     "get_touch": "Get In Touch",
     "location_text": "Tech City, Karnataka",
-    "home_nav": "Home"
+    "home_nav": "Home",
+    "bot_header": "GrievTech Assistant",
+    "bot_greeting": "Hello! How can I help you today?",
+    "bot_placeholder": "Type a message...",
+    "rate_system": "Rate Our System",
+    "feedback_desc": "Your feedback helps us improve.",
+    "rating_label": "Rating (1-5 Stars)",
+    "submit_feedback": "Submit Feedback",
+    "excellent": "Excellent",
+    "good": "Good",
+    "average": "Average",
+    "poor": "Poor",
+    "very_bad": "Very Bad",
+    "feedback_placeholder": "Tell us more about your experience...",
+    "feedback_thankyou": "Thank you for your feedback!"
 }

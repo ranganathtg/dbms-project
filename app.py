@@ -63,12 +63,21 @@ def inject_translations():
         return t.get(key, key)
     return dict(_=_, lang=lang)
 
+translation_cache = {}
+
 def dynamic_translate(text, target_lang):
     if not text or target_lang == 'en':
         return text
+    
+    cache_key = f"{text}_{target_lang}"
+    if cache_key in translation_cache:
+        return translation_cache[cache_key]
+        
     try:
         translator = GoogleTranslator(source='auto', target=target_lang)
-        return translator.translate(text)
+        result = translator.translate(text)
+        translation_cache[cache_key] = result
+        return result
     except Exception as e:
         print("Translation error:", e)
         return text
@@ -90,12 +99,54 @@ if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
 # 🗄️ DB
+def get_db():
+    global db
+    try:
+        db.ping(reconnect=True, attempts=3, delay=1)
+    except:
+        db = mysql.connector.connect(
+            host="localhost",
+            user="root",
+            password="Ranga@2005",
+            database="grievance_db"
+        )
+    return db
+
 db = mysql.connector.connect(
     host="localhost",
     user="root",
     password="Ranga@2005",
     database="grievance_db"
 )
+
+# 🛠️ AUTO-CREATE NEW TABLES (Chatbot & Feedback)
+def init_db():
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS chat_logs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT,
+        user_message TEXT,
+        bot_response TEXT,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+    ''')
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS feedback (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT,
+        rating INT CHECK (rating BETWEEN 1 AND 5),
+        message TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+    ''')
+    conn.commit()
+    cursor.close()
+
+init_db()
 
 # 🔢 OTP GENERATE
 def generate_otp():
@@ -267,11 +318,11 @@ def submit():
         new_keywords = get_keywords(title) | get_keywords(description)
 
         for ec in existing_complaints:
-            # 1. Check Proximity (within ~100 meters)
+            # 1. Check Proximity (within ~1km)
             if lat_val and lon_val and ec['latitude'] and ec['longitude']:
                 lat_diff = abs(float(ec['latitude']) - lat_val)
                 lon_diff = abs(float(ec['longitude']) - lon_val)
-                if lat_diff < 0.001 and lon_diff < 0.001:
+                if lat_diff < 0.01 and lon_diff < 0.01:
                     duplicate_id = ec['id']
                     break
             
@@ -334,7 +385,13 @@ def dashboard():
     lang = session.get('lang', 'en')
 
     cursor = db.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM grievances WHERE user_id=%s", (user_id,))
+    # 🚀 Update: Include complaints contributed to via complaint_locations (merged duplicates)
+    cursor.execute("""
+        SELECT DISTINCT g.* 
+        FROM grievances g
+        LEFT JOIN complaint_locations l ON g.id = l.complaint_id
+        WHERE g.user_id = %s OR l.user_id = %s
+    """, (user_id, user_id))
     data = cursor.fetchall()
 
     for g in data:
@@ -523,7 +580,9 @@ def admin():
 # LOGOUT
 @app.route('/logout')
 def logout():
+    lang = session.get('lang', 'en')
     session.clear()
+    session['lang'] = lang
     return redirect('/')
 
 
@@ -615,6 +674,75 @@ GrievTech Team
 @app.route('/forgot-password')
 def forgot_password():
     return "<h3>Forgot Password Page (You can design later)</h3>"
+
+
+# =========================
+# CHATBOT (Rule-Based)
+# =========================
+@app.route('/chatbot', methods=['POST'])
+def chatbot():
+    if 'user_id' not in session:
+        return {"response": "Please login to use the assistant."}, 401
+    
+    data = request.json
+    user_msg = data.get('message', '').lower()
+    user_id = session['user_id']
+    lang = session.get('lang', 'en')
+    
+    response = "Sorry, I didn’t understand. Please try another question."
+    
+    if any(greet in user_msg for greet in ["hi", "hello", "hey"]):
+        response = "Hello! I am your GrievTech assistant. How can I help you today?"
+    elif "submit" in user_msg or "how to report" in user_msg:
+        response = "To submit a complaint, click the 'Submit Grievance' button on your dashboard, fill in the details, and upload a geotagged photo."
+    elif "status" in user_msg or "check" in user_msg:
+        response = "You can check your complaint status directly on your dashboard table. It shows if it is 'Pending', 'In Progress', or 'Resolved'."
+    elif "login" in user_msg:
+        response = "You are already logged in! To login again later, use your registered email and password on the login page."
+    elif "contact" in user_msg or "admin" in user_msg:
+        response = "You can contact the admin team at support@grievtech.com or visit our office."
+    elif "what is" in user_msg or "system" in user_msg:
+        response = "GrievTech is an AI-powered Grievance Management System that helps citizens report issues like water, road, and electricity problems using geotagged photos."
+
+    # Translate response if not English
+    if lang != 'en':
+        response = dynamic_translate(response, lang)
+
+    # Store in DB
+    cursor = db.cursor()
+    cursor.execute(
+        "INSERT INTO chat_logs (user_id, user_message, bot_response) VALUES (%s, %s, %s)",
+        (user_id, user_msg, response)
+    )
+    db.commit()
+    cursor.close()
+
+    return {"response": response}
+
+
+# =========================
+# FEEDBACK
+# =========================
+@app.route('/submit_feedback', methods=['POST'])
+def submit_feedback():
+    if 'user_id' not in session:
+        return redirect('/login')
+    
+    user_id = session['user_id']
+    rating = request.form.get('rating')
+    message = request.form.get('message')
+    
+    if rating and message:
+        cursor = db.cursor()
+        cursor.execute(
+            "INSERT INTO feedback (user_id, rating, message) VALUES (%s, %s, %s)",
+            (user_id, rating, message)
+        )
+        db.commit()
+        cursor.close()
+        return redirect('/dashboard?status=feedback_submitted')
+    
+    return redirect('/dashboard?error=feedback_failed')
 
 
 if __name__ == '__main__':

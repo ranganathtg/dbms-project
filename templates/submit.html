@@ -162,18 +162,25 @@
                 if (!file || !file.type.startsWith('image/')) return;
 
                 submitBtn.disabled = true;
-                statusEl.innerText = "🔍 Scanning photo for GPS text watermark...";
+                statusEl.innerText = "🔍 Initializing scanner...";
                 statusEl.className = "text-center text-warning fw-bold";
 
                 try {
-                    const result = await Tesseract.recognize(file, 'eng');
+                    const result = await Tesseract.recognize(file, 'eng', {
+                        logger: m => {
+                            if (m.status === 'recognizing text') {
+                                statusEl.innerText = `🔍 Scanning photo... ${Math.round(m.progress * 100)}%`;
+                            }
+                        }
+                    });
+                    
                     const text = result.data.text;
                     console.log("OCR Result:", text);
 
                     // Robust Regex for "Lat 14.394083 Long 74.534866"
-                    // Handles cases with or without degree symbols, colons, or spaces
-                    const latMatch = text.match(/Lat[^\d-]*(-?\d+\.\d+)/i);
-                    const lonMatch = text.match(/Lon[^\d-]*(-?\d+\.\d+)/i);
+                    // Handles misreads like 'Iat', '1at', 'Long' vs 'Lon', etc.
+                    const latMatch = text.match(/[LI1]at[^\d-]*(-?\d+\.\d+)/i);
+                    const lonMatch = text.match(/L[o0]n[^\d-]*(-?\d+\.\d+)/i);
 
                     if (latMatch && lonMatch) {
                         latInput.value = latMatch[1];
@@ -185,10 +192,13 @@
                         if (window.locationSource !== "browser") {
                             statusEl.innerText = "⚠ No GPS watermark found. Using device location.";
                             statusEl.className = "text-center text-secondary fw-bold";
+                        } else {
+                            statusEl.innerText = "📍 Photo scanned. Using device location.";
+                            statusEl.className = "text-center text-success fw-bold";
                         }
                     }
                 } catch (err) {
-                    console.error(err);
+                    console.error("OCR Error:", err);
                     statusEl.innerText = "❌ OCR Failed. Using device location.";
                     statusEl.className = "text-center text-danger fw-bold";
                 } finally {
