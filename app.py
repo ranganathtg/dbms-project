@@ -63,7 +63,23 @@ def inject_translations():
         return t.get(key, key)
     return dict(_=_, lang=lang)
 
+# 🔹 Persistent Translation Cache
+CACHE_FILE = "translations_cache.json"
 translation_cache = {}
+
+if os.path.exists(CACHE_FILE):
+    try:
+        with open(CACHE_FILE, "r", encoding="utf-8") as f:
+            translation_cache = json.load(f)
+    except:
+        translation_cache = {}
+
+def save_cache():
+    try:
+        with open(CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(translation_cache, f, ensure_ascii=False, indent=4)
+    except:
+        pass
 
 def dynamic_translate(text, target_lang):
     if not text or target_lang == 'en':
@@ -77,6 +93,7 @@ def dynamic_translate(text, target_lang):
         translator = GoogleTranslator(source='auto', target=target_lang)
         result = translator.translate(text)
         translation_cache[cache_key] = result
+        save_cache() # Save every time we get a new translation
         return result
     except Exception as e:
         print("Translation error:", e)
@@ -143,6 +160,13 @@ def init_db():
         FOREIGN KEY (user_id) REFERENCES users(id)
     )
     ''')
+    
+    # 🔥 AUTO-UPDATE: Ensure resolved_at column exists in grievances
+    try:
+        cursor.execute("ALTER TABLE grievances ADD COLUMN resolved_at TIMESTAMP NULL DEFAULT NULL AFTER created_at")
+    except:
+        pass # Column already exists
+        
     conn.commit()
     cursor.close()
 
@@ -601,7 +625,8 @@ def update_status(id):
 
     new_status = request.form.get('status')
 
-    cursor = db.cursor(dictionary=True)
+    db_conn = get_db()
+    cursor = db_conn.cursor(dictionary=True)
 
     # 🔹 Get old data + user email
     cursor.execute("""
@@ -667,6 +692,34 @@ GrievTech Team
     except Exception as e:
         print("Email error:", e)
 
+    return redirect('/admin')
+
+
+# DELETE COMPLAINT
+@app.route('/delete/<int:id>', methods=['POST'])
+def delete_complaint(id):
+    if 'user_id' not in session or session.get('role') != 'admin':
+        return redirect('/login')
+
+    db_conn = get_db()
+    cursor = db_conn.cursor(dictionary=True)
+    
+    # 1. Fetch file path to delete from storage
+    cursor.execute("SELECT file_path FROM grievances WHERE id = %s", (id,))
+    row = cursor.fetchone()
+    if row and row['file_path']:
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], row['file_path'])
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception as e:
+                print(f"Error deleting file: {e}")
+
+    # 2. Delete from database
+    cursor.execute("DELETE FROM grievances WHERE id = %s", (id,))
+    db_conn.commit()
+    cursor.close()
+    
     return redirect('/admin')
 
 

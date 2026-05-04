@@ -22,6 +22,7 @@ CREATE TABLE grievances (
     remarks TEXT,
     duplicate_count INT DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    resolved_at TIMESTAMP NULL DEFAULT NULL,
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 

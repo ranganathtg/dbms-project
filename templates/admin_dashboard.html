@@ -210,7 +210,7 @@
                         <th>{{ _('status') }}</th>
                         <th>{{ _('file') }}</th>
                         <th>{{ _('map_trace') }}</th>
-                        <th>{{ _('update') }}</th>
+                        <th>{{ _('actions') }}</th>
                     </tr>
                 </thead>
 
@@ -274,19 +274,26 @@
                         </td>
 
                         <td>
-                            <form method="POST" action="/update/{{ g.id }}" class="d-flex">
-                                <select name="status" class="form-select form-select-sm me-1"
-                                    style="width: 100px; font-size: 0.7rem;">
-                                    <option value="Pending" {{ 'selected' if g.status=='Pending' else '' }}>{{
-                                        _('pending') }}</option>
-                                    <option value="In Progress" {{ 'selected' if g.status=='In Progress' else '' }}>In
-                                        Progress</option>
-                                    <option value="Resolved" {{ 'selected' if g.status=='Resolved' else '' }}>{{
-                                        _('resolved') }}</option>
-                                </select>
-                                <button type="submit" class="btn btn-sm btn-dark" style="font-size: 0.7rem;">{{
-                                    _('update') }}</button>
-                            </form>
+                            <div class="d-flex align-items-center justify-content-center">
+                                <form method="POST" action="/update/{{ g.id }}" class="d-flex me-1">
+                                    <select name="status" class="form-select form-select-sm me-1"
+                                        style="width: 100px; font-size: 0.7rem;">
+                                        <option value="Pending" {{ 'selected' if g.status=='Pending' else '' }}>{{
+                                            _('pending') }}</option>
+                                        <option value="In Progress" {{ 'selected' if g.status=='In Progress' else '' }}>In
+                                            Progress</option>
+                                        <option value="Resolved" {{ 'selected' if g.status=='Resolved' else '' }}>{{
+                                            _('resolved') }}</option>
+                                    </select>
+                                    <button type="submit" class="btn btn-sm btn-dark" style="font-size: 0.7rem;">{{
+                                        _('update') }}</button>
+                                </form>
+                                <form method="POST" action="/delete/{{ g.id }}" class="delete-form" data-confirm="{{ _('delete') }}">
+                                    <button type="submit" class="btn btn-sm btn-danger" style="font-size: 0.7rem;">
+                                        <i class="fa fa-trash"></i>
+                                    </button>
+                                </form>
+                            </div>
                         </td>
 
                     </tr>
@@ -337,7 +344,7 @@
 
     {% if chart_data %}
     <script id="chart-data-json" type="application/json">
-    {{ chart_data | tojson | safe }}
+    {{ (chart_data or []) | tojson | safe }}
 </script>
     <script>
         const chartDataRaw = JSON.parse(document.getElementById("chart-data-json").textContent);
@@ -488,14 +495,21 @@
                 </div>
             </td>
             <td>
-                <form method="POST" action="/update/${c.complaint_id}" class="d-flex align-items-center justify-content-center">
-                    <select name="status" class="form-select form-select-sm me-1" style="width: 100px; font-size: 0.7rem;">
-                        <option value="Pending" ${c.status === 'Pending' ? 'selected' : ''}>{{ _('pending') }}</option>
-                        <option value="In Progress" ${c.status === 'In Progress' ? 'selected' : ''}>In Progress</option>
-                        <option value="Resolved" ${c.status === 'Resolved' ? 'selected' : ''}>{{ _('resolved') }}</option>
-                    </select>
-                    <button type="submit" class="btn btn-sm btn-dark" style="font-size: 0.7rem;">{{ _('update') }}</button>
-                </form>
+                <div class="d-flex align-items-center justify-content-center">
+                    <form method="POST" action="/update/${c.complaint_id}" class="d-flex me-1">
+                        <select name="status" class="form-select form-select-sm me-1" style="width: 100px; font-size: 0.7rem;">
+                            <option value="Pending" ${c.status === 'Pending' ? 'selected' : ''}>{{ _('pending') }}</option>
+                            <option value="In Progress" ${c.status === 'In Progress' ? 'selected' : ''}>In Progress</option>
+                            <option value="Resolved" ${c.status === 'Resolved' ? 'selected' : ''}>{{ _('resolved') }}</option>
+                        </select>
+                        <button type="submit" class="btn btn-sm btn-dark" style="font-size: 0.7rem;">{{ _('update') }}</button>
+                    </form>
+                    <form method="POST" action="/delete/${c.complaint_id}" class="delete-form" data-confirm="{{ _('delete') }}">
+                        <button type="submit" class="btn btn-sm btn-danger" style="font-size: 0.7rem;">
+                            <i class="fa fa-trash"></i>
+                        </button>
+                    </form>
+                </div>
             </td>
         `;
                 tbody.appendChild(tr);
@@ -525,6 +539,16 @@
                 if (modal) modal.hide();
 
                 traceSpecificLocation(locId);
+            }
+        });
+
+        // 🔥 GLOBAL DELETE CONFIRMATION
+        document.addEventListener('submit', function (e) {
+            if (e.target && e.target.classList.contains('delete-form')) {
+                const msg = e.target.getAttribute('data-confirm') || 'Delete';
+                if (!confirm(msg + '?')) {
+                    e.preventDefault();
+                }
             }
         });
     </script>

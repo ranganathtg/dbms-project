@@ -101,5 +101,6 @@
     "poor": "Poor",
     "very_bad": "Very Bad",
     "feedback_placeholder": "Tell us more about your experience...",
-    "feedback_thankyou": "Thank you for your feedback!"
+    "feedback_thankyou": "Thank you for your feedback!",
+    "delete": "Delete"
 }
