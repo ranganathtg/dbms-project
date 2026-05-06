@@ -100,11 +100,13 @@
                 return;
             }
             const recognition = new webkitSpeechRecognition();
-            let lang = "{{ session.get('lang') }}";
+            let lang = "{{ session.get('lang', 'en') }}";
             if (lang === "hi") {
                 recognition.lang = "hi-IN";
             } else if (lang === "kn") {
                 recognition.lang = "kn-IN";
+            } else if (lang === "te") {
+                recognition.lang = "te-IN";
             } else {
                 recognition.lang = "en-IN";
             }
@@ -114,11 +116,22 @@
             recognition.onresult = function (event) {
                 let speech = event.results[0][0].transcript;
                 let descBox = document.getElementById("description");
-                descBox.value = descBox.value + " " + speech;
+                if (descBox.value) {
+                    descBox.value += " " + speech;
+                } else {
+                    descBox.value = speech;
+                }
                 status.innerText = "✔ Speech captured";
             };
-            recognition.onerror = function () { status.innerText = "❌ Error occurred"; };
-            recognition.onend = function () { status.innerText += " (Stopped)"; };
+            recognition.onerror = function (event) { 
+                status.innerText = "❌ Error occurred: " + event.error; 
+                console.error("Speech Recognition Error:", event.error);
+            };
+            recognition.onend = function () { 
+                if (!status.innerText.includes("Error")) {
+                    status.innerText += " (Stopped)"; 
+                }
+            };
             recognition.start();
         }
     </script>
