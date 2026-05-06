@@ -13,11 +13,7 @@
 
 <body class="bg-light">
 
-    <!-- 🌐 Language switch -->
-    <div style="text-align:right; padding:10px;">
-        <a href="/set_language/en">English</a> |
-        <a href="/set_language/kn">ಕನ್ನಡ</a>
-    </div>
+
 
     <div class="container d-flex justify-content-center mt-5">
 
@@ -105,7 +101,13 @@
             }
             const recognition = new webkitSpeechRecognition();
             let lang = "{{ session.get('lang') }}";
-            recognition.lang = (lang === "kn") ? "kn-IN" : "en-IN";
+            if (lang === "hi") {
+                recognition.lang = "hi-IN";
+            } else if (lang === "kn") {
+                recognition.lang = "kn-IN";
+            } else {
+                recognition.lang = "en-IN";
+            }
             recognition.interimResults = false;
 
             recognition.onstart = function () { status.innerText = "🎤 Listening..."; };

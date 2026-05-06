@@ -1,6 +1,8 @@
-from flask import Flask, render_template, request, redirect, session
+from flask import Flask, render_template, request, redirect, session, Response
 import mysql.connector
 import os
+import csv
+import io
 from werkzeug.utils import secure_filename
 from PIL import Image
 from PIL.ExifTags import TAGS, GPSTAGS
@@ -326,73 +328,14 @@ def submit():
 
         cursor = db.cursor(dictionary=True)
 
-        # 🚀 FEATURE: Advanced Duplicate Detection (Text + Proximity)
-        duplicate_id = None
-        
-        # Fetch all complaints in same category
-        cursor.execute("SELECT id, title, description, latitude, longitude FROM grievances WHERE category=%s", (category,))
-        existing_complaints = cursor.fetchall()
-        
-        def get_keywords(text):
-            words = str(text).lower().replace(',', ' ').replace('.', ' ').split()
-            # Ignore common generic words, require length >= 4
-            ignore = {'this', 'that', 'with', 'from', 'have', 'been', 'very', 'proper', 'issue', 'issues', 'problem', 'problems'}
-            return set(w for w in words if len(w) >= 4 and w not in ignore)
-
-        new_keywords = get_keywords(title) | get_keywords(description)
-
-        for ec in existing_complaints:
-            # 1. Check Proximity (within ~1km)
-            if lat_val and lon_val and ec['latitude'] and ec['longitude']:
-                lat_diff = abs(float(ec['latitude']) - lat_val)
-                lon_diff = abs(float(ec['longitude']) - lon_val)
-                if lat_diff < 0.01 and lon_diff < 0.01:
-                    duplicate_id = ec['id']
-                    break
-            
-            # 2. Check Text Similarity (at least 1 highly significant word match)
-            ec_keywords = get_keywords(ec['title']) | get_keywords(ec['description'])
-            if new_keywords and ec_keywords:
-                if len(new_keywords.intersection(ec_keywords)) >= 1:
-                    duplicate_id = ec['id']
-                    break
-
-        if duplicate_id:
-            # It's a duplicate! Update priority and increment count
-            cursor = db.cursor()
-            cursor.execute('''
-                UPDATE grievances 
-                SET priority = 'Emergency', duplicate_count = duplicate_count + 1 
-                WHERE id = %s
-            ''', (duplicate_id,))
-            
-            # Insert into complaint_locations
-            if lat_val is not None and lon_val is not None:
-                cursor.execute(
-                    "INSERT INTO complaint_locations (complaint_id, latitude, longitude, user_id) VALUES (%s,%s,%s,%s)",
-                    (duplicate_id, lat_val, lon_val, user_id)
-                )
-            
-            db.commit()
-            return redirect('/dashboard?status=duplicate_merged')
-        else:
-            # Normal Insert
-            cursor = db.cursor()
-            cursor.execute(
-                "INSERT INTO grievances (user_id, title, description, category, priority, file_path, latitude, longitude) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
-                (user_id, title, description, category, priority, filename, lat_val, lon_val)
-            )
-            new_complaint_id = cursor.lastrowid
-            
-            # Insert first location into complaint_locations
-            if lat_val is not None and lon_val is not None:
-                cursor.execute(
-                    "INSERT INTO complaint_locations (complaint_id, latitude, longitude, user_id) VALUES (%s,%s,%s,%s)",
-                    (new_complaint_id, lat_val, lon_val, user_id)
-                )
-
-            db.commit()
-            return redirect('/dashboard')
+        # Normal Insert
+        cursor = db.cursor()
+        cursor.execute(
+            "INSERT INTO grievances (user_id, title, description, category, priority, file_path, latitude, longitude) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+            (user_id, title, description, category, priority, filename, lat_val, lon_val)
+        )
+        db.commit()
+        return redirect('/dashboard')
 
     return render_template('submit.html')
 
@@ -409,13 +352,12 @@ def dashboard():
     lang = session.get('lang', 'en')
 
     cursor = db.cursor(dictionary=True)
-    # 🚀 Update: Include complaints contributed to via complaint_locations (merged duplicates)
+    # Only fetch complaints belonging to the user
     cursor.execute("""
-        SELECT DISTINCT g.* 
-        FROM grievances g
-        LEFT JOIN complaint_locations l ON g.id = l.complaint_id
-        WHERE g.user_id = %s OR l.user_id = %s
-    """, (user_id, user_id))
+        SELECT * 
+        FROM grievances 
+        WHERE user_id = %s
+    """, (user_id,))
     data = cursor.fetchall()
 
     for g in data:
@@ -464,37 +406,65 @@ def admin():
     cursor = db.cursor(dictionary=True)
 
     # 🔹 1. Fetch Grievances based on filter + category
-    query = "SELECT * FROM grievances WHERE 1=1"
+    query = "SELECT g.*, u.name as username FROM grievances g LEFT JOIN users u ON g.user_id = u.id WHERE 1=1"
     params = []
 
     if filter_type == 'active':
-        query += " AND status != 'Resolved'"
+        query += " AND g.status != 'Resolved'"
     elif filter_type == 'emergency':
-        query += " AND priority = 'Emergency' AND status != 'Resolved'"
+        query += " AND g.priority = 'Emergency' AND g.status != 'Resolved'"
     elif filter_type == 'resolved':
-        query += " AND status = 'Resolved'"
+        query += " AND g.status = 'Resolved'"
 
     if category and category != "All":
-        query += " AND category = %s"
+        query += " AND g.category = %s"
         params.append(category)
 
-    query += " ORDER BY created_at DESC"
+    query += " ORDER BY g.created_at DESC"
     cursor.execute(query, tuple(params))
-    data = cursor.fetchall()
+    raw_data = cursor.fetchall()
 
     lang = session.get('lang', 'en')
-    for g in data:
+    
+    grouped_data = {}
+    for g in raw_data:
         g['title'] = dynamic_translate(g['title'], lang)
         g['description'] = dynamic_translate(g['description'], lang)
 
-    # 🚀 POWER OVERRIDE: Ensure Geotagged photos always show their exact location
-    for g in data:
+        # 🚀 POWER OVERRIDE: Ensure Geotagged photos always show their exact location
         if g.get('file_path') == 'water3.jpeg':
             g['latitude'], g['longitude'] = 14.394083, 74.534866
         elif g.get('file_path') == 'water4.jpeg':
             g['latitude'], g['longitude'] = 13.115446, 77.479533
         elif g.get('file_path') == 'water1.jpeg':
             g['latitude'], g['longitude'] = 13.11546, 77.479541
+
+        # Group by lowercased title and category
+        key = (g['title'].strip().lower(), g['category'])
+        if key not in grouped_data:
+            grouped_data[key] = {
+                'id': g['id'], # Primary ID for the group
+                'title': g['title'],
+                'category': g['category'],
+                'description': g['description'],
+                'priority': g['priority'],
+                'status': g['status'],
+                'file_path': g['file_path'],
+                'created_at': g['created_at'],
+                'duplicate_count': 0,
+                'complaints': [] # Holds individual reports
+            }
+        
+        # Add the specific report to the group
+        grouped_data[key]['complaints'].append(g)
+        grouped_data[key]['duplicate_count'] += 1
+        
+        # If any in group is emergency, mark group as emergency
+        if g['priority'] == 'Emergency':
+            grouped_data[key]['priority'] = 'Emergency'
+            
+    # Convert grouped dictionary back to a list for the template
+    data = list(grouped_data.values())
 
     # 🔹 2. STATS (Dynamic for the cards)
     cursor.execute("""
@@ -545,11 +515,10 @@ def admin():
     # 📍 FETCH MAP COMPLAINTS (Respects Filter)
     map_query = """
         SELECT g.id as complaint_id, g.title, g.category, g.priority, g.duplicate_count,
-               l.latitude, l.longitude, u.name as username, g.status, l.id as loc_id
+               g.latitude, g.longitude, u.name as username, g.status, g.id as loc_id
         FROM grievances g
-        JOIN complaint_locations l ON g.id = l.complaint_id
-        LEFT JOIN users u ON l.user_id = u.id
-        WHERE l.latitude IS NOT NULL AND l.longitude IS NOT NULL
+        LEFT JOIN users u ON g.user_id = u.id
+        WHERE g.latitude IS NOT NULL AND g.longitude IS NOT NULL
     """
     map_params = []
 
@@ -630,7 +599,7 @@ def update_status(id):
 
     # 🔹 Get old data + user email
     cursor.execute("""
-        SELECT g.title, g.status, g.created_at, g.resolved_at, u.email
+        SELECT g.title, g.latitude, g.longitude, g.status, g.created_at, g.resolved_at, u.email
         FROM grievances g
         JOIN users u ON g.user_id = u.id
         WHERE g.id = %s
@@ -642,35 +611,53 @@ def update_status(id):
     title = data['title']
     created = data['created_at'].strftime('%d-%m-%Y')
 
-    # 🔹 UPDATE STATUS + RESOLVED DATE
-    if new_status == "Resolved":
-        cursor.execute("""
-            UPDATE grievances 
-            SET status=%s, resolved_at=NOW()
-            WHERE id=%s
-        """, (new_status, id))
-        resolved_text = "Resolved on: " + \
-            data['created_at'].strftime('%d-%m-%Y')
+    # 🔹 UPDATE STATUS + RESOLVED DATE (Sync across identical locations)
+    emails_to_notify = [email]
 
-    else:
+    if data['latitude'] is not None and data['longitude'] is not None:
+        # Fetch all emails for this exact location and title
         cursor.execute("""
-            UPDATE grievances 
-            SET status=%s, resolved_at=NULL
-            WHERE id=%s
-        """, (new_status, id))
+            SELECT u.email FROM grievances g
+            JOIN users u ON g.user_id = u.id
+            WHERE g.title = %s AND g.latitude = %s AND g.longitude = %s
+        """, (data['title'], data['latitude'], data['longitude']))
+        emails_to_notify = [row['email'] for row in cursor.fetchall()]
+
+        if new_status == "Resolved":
+            cursor.execute("""
+                UPDATE grievances 
+                SET status=%s, resolved_at=NOW()
+                WHERE title=%s AND latitude=%s AND longitude=%s
+            """, (new_status, data['title'], data['latitude'], data['longitude']))
+        else:
+            cursor.execute("""
+                UPDATE grievances 
+                SET status=%s, resolved_at=NULL
+                WHERE title=%s AND latitude=%s AND longitude=%s
+            """, (new_status, data['title'], data['latitude'], data['longitude']))
+    else:
+        if new_status == "Resolved":
+            cursor.execute("UPDATE grievances SET status=%s, resolved_at=NOW() WHERE id=%s", (new_status, id))
+        else:
+            cursor.execute("UPDATE grievances SET status=%s, resolved_at=NULL WHERE id=%s", (new_status, id))
+
+    if new_status == "Resolved":
+        resolved_text = "Resolved on: " + data['created_at'].strftime('%d-%m-%Y')
+    else:
         resolved_text = "Not yet resolved"
 
     db.commit()
 
     # 🔹 SEND EMAIL (KEEPING YOUR FEATURE)
     try:
-        msg = Message(
-            subject="Grievance Status Updated",
-            sender=app.config['MAIL_USERNAME'],
-            recipients=[email]
-        )
+        for user_email in set(emails_to_notify): # Unique emails
+            msg = Message(
+                subject="Grievance Status Updated",
+                sender=app.config['MAIL_USERNAME'],
+                recipients=[user_email]
+            )
 
-        msg.body = f"""
+            msg.body = f"""
 Hello,
 
 Your grievance has been updated.
@@ -686,8 +673,7 @@ Your grievance has been updated.
 Thank you,
 GrievTech Team
 """
-
-        mail.send(msg)
+            mail.send(msg)
 
     except Exception as e:
         print("Email error:", e)
@@ -796,6 +782,54 @@ def submit_feedback():
         return redirect('/dashboard?status=feedback_submitted')
     
     return redirect('/dashboard?error=feedback_failed')
+
+
+# =========================
+# EXPORT TO EXCEL (CSV)
+# =========================
+@app.route('/export')
+def export_excel():
+    if 'user_id' not in session or session.get('role') != 'admin':
+        return redirect('/login')
+
+    cursor = db.cursor(dictionary=True)
+    # Fetch all grievances with user details
+    cursor.execute("""
+        SELECT g.id, u.name as username, u.email, g.category, g.title, g.description, 
+               g.priority, g.status, g.created_at, g.resolved_at, g.duplicate_count
+        FROM grievances g
+        LEFT JOIN users u ON g.user_id = u.id
+        ORDER BY g.created_at DESC
+    """)
+    records = cursor.fetchall()
+
+    # Generate CSV
+    output = io.StringIO()
+    writer = csv.writer(output)
+    
+    # Write Headers
+    writer.writerow(['ID', 'Reported By', 'Email', 'Category', 'Title', 'Description', 'Priority', 'Status', 'Date Submitted', 'Date Resolved', 'Total Reports (Grouped)'])
+    
+    # Write Data Rows
+    for row in records:
+        writer.writerow([
+            row['id'],
+            row['username'],
+            row['email'],
+            row['category'],
+            row['title'],
+            row['description'],
+            row['priority'],
+            row['status'],
+            row['created_at'].strftime('%Y-%m-%d %H:%M') if row['created_at'] else '',
+            row['resolved_at'].strftime('%Y-%m-%d %H:%M') if row['resolved_at'] else 'N/A',
+            (row['duplicate_count'] or 0) + 1
+        ])
+
+    # Return CSV as downloadable file
+    response = Response(output.getvalue(), mimetype='text/csv')
+    response.headers['Content-Disposition'] = 'attachment; filename=GrievTech_Export.csv'
+    return response
 
 
 if __name__ == '__main__':
