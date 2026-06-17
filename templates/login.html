@@ -29,9 +29,10 @@
         </div>
 
         <!-- Right: Language -->
-        <div class="lang">
-            <select onchange="location = this.value;" class="form-select form-select-sm d-inline-block w-auto"
-                style="border-radius: 8px; padding: 4px 8px;">
+        <div class="lang d-flex align-items-center gap-2">
+            <a href="/track" class="btn btn-sm text-dark m-0" style="border: 2px solid black; border-radius: 8px; font-weight: bold; background: white; padding: 4px 10px; font-size: 14px; text-decoration: none;">🔍 {{ _('track_complaint') }}</a>
+            <select onchange="location = this.value;" class="form-select form-select-sm d-inline-block w-auto m-0"
+                style="border-radius: 8px; padding: 4px 8px; border: 2px solid black;">
                 <option value="/set_language/en" {% if lang=='en' %}selected{% endif %}>English</option>
                 <option value="/set_language/kn" {% if lang=='kn' %}selected{% endif %}>ಕನ್ನಡ</option>
                 <option value="/set_language/hi" {% if lang=='hi' %}selected{% endif %}>हिंदी</option>

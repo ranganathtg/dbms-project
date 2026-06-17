@@ -25,7 +25,7 @@
 
                 <!-- ✅ Category -->
                 <div class="mb-3">
-                    <select name="category" class="form-select" required>
+                    <select id="categorySelect" name="category" class="form-select" required>
                         <option value="">Select Problem Type</option>
                         <option value="Water">Water Problem</option>
                         <option value="Road">Road Problem</option>
@@ -37,13 +37,20 @@
 
                 <!-- Title -->
                 <div class="mb-3">
-                    <input type="text" name="title" class="form-control" placeholder="{{ _('title') }}" required>
+                    <input type="text" id="titleInput" name="title" class="form-control" placeholder="{{ _('title') }}" required>
                 </div>
 
                 <!-- ✅ ONLY ONE Description (Textarea) -->
                 <div class="mb-3">
                     <textarea id="description" name="description" class="form-control"
                         placeholder="{{ _('description') }}" rows="3" required></textarea>
+                </div>
+
+                <!-- 🎯 Duplicate Detection Warning Box -->
+                <div id="duplicate-warning" class="alert alert-warning p-2 mb-3" style="display: none; font-size: 13px; border-radius: 8px; border: 2px solid #ffc107; text-align: left;">
+                    <strong>⚠️ Similar complaints already submitted:</strong>
+                    <ul id="duplicate-list" class="mb-1 mt-1 pl-3"></ul>
+                    <small class="text-muted">You can still submit your complaint, or track the existing ones.</small>
                 </div>
 
                 <!-- 🎤 Voice Button -->
@@ -63,11 +70,11 @@
 
                 <!-- File Upload -->
                 <div class="mb-3">
-                    <input type="file" id="fileInput" name="file" class="form-control" accept="image/*,video/*">
+                    <input type="file" id="fileInput" name="file" class="form-control" accept="image/*,video/*,.pdf">
                 </div>
 
                 <p style="color:red; font-size:14px; margin-top:5px;">
-                    ⚠ Please upload a geotagged photo or video
+                    ⚠ Please upload a geotagged photo, video, or PDF
                 </p>
 
                 <!-- ✅ Location Capture -->
@@ -82,6 +89,7 @@
                 </button>
 
             </form>
+
 
             <br>
             <a href="/dashboard" class="btn btn-outline-secondary w-100">
@@ -107,6 +115,8 @@
                 recognition.lang = "kn-IN";
             } else if (lang === "te") {
                 recognition.lang = "te-IN";
+            } else if (lang === "ta") {
+                recognition.lang = "ta-IN";
             } else {
                 recognition.lang = "en-IN";
             }
@@ -138,8 +148,11 @@
 
     <!-- Tesseract.js for OCR -->
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    
+    <!-- EXIF parser for Geotagged Photos -->
+    <script src="https://cdn.jsdelivr.net/npm/exifr/dist/lite.umd.js"></script>
 
-    <!-- 📍 Geolocation & OCR Script -->
+    <!-- 📍 Geolocation, EXIF & OCR Script -->
     <script>
         window.locationSource = "none"; // global flag to track source
 
@@ -153,8 +166,8 @@
             if (navigator.geolocation) {
                 navigator.geolocation.getCurrentPosition(
                     function (position) {
-                        // Only use browser location if OCR hasn't already found something better
-                        if (window.locationSource !== "ocr") {
+                        // Only use browser location if photo hasn't already provided one
+                        if (window.locationSource !== "ocr" && window.locationSource !== "exif") {
                             latInput.value = position.coords.latitude;
                             lonInput.value = position.coords.longitude;
                             statusEl.innerText = "📍 Device location captured successfully!";
@@ -163,7 +176,7 @@
                         }
                     },
                     function (error) {
-                        if (window.locationSource !== "ocr") {
+                        if (window.locationSource !== "ocr" && window.locationSource !== "exif") {
                             statusEl.innerText = "⚠ Please allow location access.";
                             statusEl.className = "text-center text-danger fw-bold";
                         }
@@ -171,20 +184,38 @@
                 );
             }
 
-            // 2. OCR Scanning when a file is chosen
+            // 2. EXIF & OCR Scanning when a file is chosen
             document.getElementById('fileInput').addEventListener('change', async (e) => {
                 const file = e.target.files[0];
                 if (!file || !file.type.startsWith('image/')) return;
 
                 submitBtn.disabled = true;
-                statusEl.innerText = "🔍 Initializing scanner...";
+                statusEl.innerText = "🔍 Checking photo for location data...";
                 statusEl.className = "text-center text-warning fw-bold";
 
+                try {
+                    // STEP 2A: Try reading exact EXIF GPS metadata first (Fastest and 100% accurate)
+                    const exifData = await exifr.gps(file);
+                    if (exifData && exifData.latitude && exifData.longitude) {
+                        latInput.value = exifData.latitude;
+                        lonInput.value = exifData.longitude;
+                        window.locationSource = "exif"; // LOCK THE SOURCE
+                        statusEl.innerText = "🎯 Exact location extracted from photo metadata!";
+                        statusEl.className = "text-center text-primary fw-bold";
+                        submitBtn.disabled = false;
+                        return; // Stop here, no need for OCR
+                    }
+                } catch (err) {
+                    console.warn("EXIF error or not found", err);
+                }
+
+                // STEP 2B: Fallback to OCR if EXIF fails (e.g. WhatsApp strips EXIF, leaving only watermark)
+                statusEl.innerText = "🔍 No metadata found. Scanning photo watermark...";
                 try {
                     const result = await Tesseract.recognize(file, 'eng', {
                         logger: m => {
                             if (m.status === 'recognizing text') {
-                                statusEl.innerText = `🔍 Scanning photo... ${Math.round(m.progress * 100)}%`;
+                                statusEl.innerText = `🔍 Scanning watermark... ${Math.round(m.progress * 100)}%`;
                             }
                         }
                     });
@@ -193,33 +224,83 @@
                     console.log("OCR Result:", text);
 
                     // Robust Regex for "Lat 14.394083 Long 74.534866"
-                    // Handles misreads like 'Iat', '1at', 'Long' vs 'Lon', etc.
-                    const latMatch = text.match(/[LI1]at[^\d-]*(-?\d+\.\d+)/i);
-                    const lonMatch = text.match(/L[o0]n[^\d-]*(-?\d+\.\d+)/i);
+                    // Handles misreads like 'Iat', '1at', 'Long' vs 'Lon', comma instead of dot, etc.
+                    const latMatch = text.match(/[LI1]at[^\d-]*(-?\d+[.,]\d+)/i);
+                    const lonMatch = text.match(/L[o0]n[^\d-]*(-?\d+[.,]\d+)/i);
 
                     if (latMatch && lonMatch) {
-                        latInput.value = latMatch[1];
-                        lonInput.value = lonMatch[1];
+                        latInput.value = latMatch[1].replace(',', '.');
+                        lonInput.value = lonMatch[1].replace(',', '.');
                         window.locationSource = "ocr"; // LOCK THE SOURCE
                         statusEl.innerText = "🎯 Exact location extracted from photo watermark!";
                         statusEl.className = "text-center text-primary fw-bold";
                     } else {
                         if (window.locationSource !== "browser") {
-                            statusEl.innerText = "⚠ No GPS watermark found. Using device location.";
+                            statusEl.innerText = "⚠ No location found in photo. Using device location.";
                             statusEl.className = "text-center text-secondary fw-bold";
                         } else {
-                            statusEl.innerText = "📍 Photo scanned. Using device location.";
+                            statusEl.innerText = "📍 Photo scanned (No GPS). Using device location.";
                             statusEl.className = "text-center text-success fw-bold";
                         }
                     }
                 } catch (err) {
                     console.error("OCR Error:", err);
-                    statusEl.innerText = "❌ OCR Failed. Using device location.";
+                    statusEl.innerText = "❌ Scan Failed. Using device location.";
                     statusEl.className = "text-center text-danger fw-bold";
                 } finally {
                     submitBtn.disabled = false;
                 }
             });
+        });
+    </script>
+
+    <!-- 🎯 Real-Time Duplicate Detection Script -->
+    <script>
+        document.addEventListener("DOMContentLoaded", function () {
+            const titleInput = document.getElementById("titleInput");
+            const categorySelect = document.getElementById("categorySelect");
+            const warningBox = document.getElementById("duplicate-warning");
+            const duplicateList = document.getElementById("duplicate-list");
+
+            async function checkDuplicates() {
+                const title = titleInput.value.trim();
+                const category = categorySelect.value;
+
+                if (title.length < 5 || !category) {
+                    warningBox.style.display = "none";
+                    return;
+                }
+
+                try {
+                    const res = await fetch("/detect_duplicates", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ title: title, category: category })
+                    });
+                    const data = await res.json();
+
+                    if (data.duplicates && data.duplicates.length > 0) {
+                        duplicateList.innerHTML = "";
+                        data.duplicates.forEach(item => {
+                            const li = document.createElement("li");
+                            li.innerHTML = `<strong>#${item.id}</strong>: ${item.title} (Status: <span class="badge bg-secondary" style="font-size:10px;">${item.status}</span>) - <a href="/track/${item.id}" target="_blank" style="text-decoration:none;">Track 🔗</a>`;
+                            duplicateList.appendChild(li);
+                        });
+                        warningBox.style.display = "block";
+                    } else {
+                        warningBox.style.display = "none";
+                    }
+                } catch (err) {
+                    console.error("Duplicate check error:", err);
+                }
+            }
+
+            let timeout = null;
+            titleInput.addEventListener("input", function () {
+                clearTimeout(timeout);
+                timeout = setTimeout(checkDuplicates, 500);
+            });
+            categorySelect.addEventListener("change", checkDuplicates);
         });
     </script>
 

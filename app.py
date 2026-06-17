@@ -1,11 +1,29 @@
-from flask import Flask, render_template, request, redirect, session, Response
-import mysql.connector
+from flask import Flask, render_template, request, redirect, session, Response, url_for
 import os
 import csv
 import io
+import datetime
 from werkzeug.utils import secure_filename
 from PIL import Image
 from PIL.ExifTags import TAGS, GPSTAGS
+from flask_mail import Mail, Message
+import random
+import json
+from deep_translator import GoogleTranslator
+from dotenv import load_dotenv
+from supabase import create_client, Client
+
+# Load environment variables
+load_dotenv()
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+if not SUPABASE_URL or not SUPABASE_KEY or "YOUR_SUPABASE" in SUPABASE_URL:
+    raise RuntimeError("Supabase credentials not set. Please set SUPABASE_URL and SUPABASE_KEY in the .env file.")
+
+# Connect to Supabase
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Extract EXIF GPS Data Helper
 def get_exif_data(image_path):
@@ -38,13 +56,6 @@ def get_lat_lon(gps_info):
         return lat, lon
     except:
         return None
-
-# ✅ NEW
-from flask_mail import Mail, Message
-import random
-
-import json
-from deep_translator import GoogleTranslator
 
 def load_translations(lang):
     try:
@@ -117,63 +128,6 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
-# 🗄️ DB
-def get_db():
-    global db
-    try:
-        db.ping(reconnect=True, attempts=3, delay=1)
-    except:
-        db = mysql.connector.connect(
-            host="localhost",
-            user="root",
-            password="Ranga@2005",
-            database="grievance_db"
-        )
-    return db
-
-db = mysql.connector.connect(
-    host="localhost",
-    user="root",
-    password="Ranga@2005",
-    database="grievance_db"
-)
-
-# 🛠️ AUTO-CREATE NEW TABLES (Chatbot & Feedback)
-def init_db():
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS chat_logs (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        user_id INT,
-        user_message TEXT,
-        bot_response TEXT,
-        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users(id)
-    )
-    ''')
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS feedback (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        user_id INT,
-        rating INT CHECK (rating BETWEEN 1 AND 5),
-        message TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users(id)
-    )
-    ''')
-    
-    # 🔥 AUTO-UPDATE: Ensure resolved_at column exists in grievances
-    try:
-        cursor.execute("ALTER TABLE grievances ADD COLUMN resolved_at TIMESTAMP NULL DEFAULT NULL AFTER created_at")
-    except:
-        pass # Column already exists
-        
-    conn.commit()
-    cursor.close()
-
-init_db()
-
 # 🔢 OTP GENERATE
 def generate_otp():
     return str(random.randint(100000, 999999))
@@ -228,13 +182,14 @@ def register():
                 user = session.get('temp_user')
 
                 try:
-                    cursor = db.cursor()
-                    cursor.execute(
-                        "INSERT INTO users (name,email,password,role) VALUES (%s,%s,%s,%s)",
-                        (user['name'], user['email'], user['password'], 'user')
-                    )
-                    db.commit()
-                except mysql.connector.Error as err:
+                    supabase.table('users').insert({
+                        'name': user['name'],
+                        'email': user['email'],
+                        'password': user['password'],
+                        'role': 'user'
+                    }).execute()
+                except Exception as err:
+                    print("Registration error:", err)
                     return render_template('register.html', show_otp=True, error="Registration failed! Email might already exist.")
 
                 session.pop('otp', None)
@@ -245,9 +200,6 @@ def register():
                 return render_template('register.html', show_otp=True, error="Invalid OTP")
 
     return render_template('register.html')
-
-
-
 
 
 # =========================
@@ -263,15 +215,12 @@ def login():
         print(f"Email entered: '{email}'")
         print(f"Password entered: '{password}'")
 
-        # Clear stale transaction snapshot to see newly registered users
-        db.commit()
-
-        cursor = db.cursor(dictionary=True)
-        cursor.execute(
-            "SELECT * FROM users WHERE email=%s AND password=%s",
-            (email, password)
-        )
-        user = cursor.fetchone()
+        try:
+            res = supabase.table('users').select('*').eq('email', email).eq('password', password).execute()
+            user = res.data[0] if res.data else None
+        except Exception as e:
+            print("Login error querying Supabase:", e)
+            user = None
 
         if user:
             session['user_id'] = user['id']
@@ -279,6 +228,8 @@ def login():
 
             if user['role'] == 'admin':
                 return redirect('/admin')
+            elif user['role'] == 'officer':
+                return redirect('/officer')
             else:
                 return redirect('/dashboard')
         else:
@@ -319,22 +270,79 @@ def submit():
             file.save(filepath)
 
             # 📸 Extract EXIF GPS data ONLY if the form didn't already capture coordinates via OCR
-            if not lat_val or not lon_val:
+            if (not lat_val or not lon_val) and not filename.endswith('.pdf'):
                 gps_info = get_exif_data(filepath)
                 if gps_info:
                     coords = get_lat_lon(gps_info)
                     if coords:
                         lat_val, lon_val = coords
 
-        cursor = db.cursor(dictionary=True)
+            # Upload to Supabase Storage
+            try:
+                with open(filepath, 'rb') as f:
+                    supabase.storage.from_('uploads').upload(
+                        path=filename,
+                        file=f,
+                        file_options={"cache-control": "3600", "x-upsert": "true"}
+                    )
+            except Exception as se:
+                print("Supabase Storage upload error:", se)
 
-        # Normal Insert
-        cursor = db.cursor()
-        cursor.execute(
-            "INSERT INTO grievances (user_id, title, description, category, priority, file_path, latitude, longitude) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
-            (user_id, title, description, category, priority, filename, lat_val, lon_val)
-        )
-        db.commit()
+        # Generate unique tracking ID
+        try:
+            while True:
+                tid = f"GT-{random.randint(100000, 999999)}"
+                chk = supabase.table('grievances').select('id').eq('tracking_id', tid).execute()
+                if not chk.data:
+                    tracking_id = tid
+                    break
+        except Exception as te:
+            print("Error generating tracking_id:", te)
+            tracking_id = f"GT-{random.randint(100000, 999999)}"
+
+        try:
+            supabase.table('grievances').insert({
+                'user_id': user_id,
+                'title': title,
+                'description': description,
+                'category': category,
+                'priority': priority,
+                'file_path': filename,
+                'latitude': lat_val,
+                'longitude': lon_val,
+                'tracking_id': tracking_id
+            }).execute()
+        except Exception as e:
+            print("Submit insert error:", e)
+
+        # Send submission email containing the Tracking ID
+        try:
+            user_res = supabase.table('users').select('email').eq('id', user_id).execute()
+            if user_res.data and user_res.data[0].get('email'):
+                user_email = user_res.data[0]['email']
+                msg = Message(
+                    subject="Grievance Registered Successfully",
+                    sender=app.config['MAIL_USERNAME'],
+                    recipients=[user_email]
+                )
+                msg.body = f"""Hello,
+
+Your grievance has been successfully registered.
+
+📌 Title: {title}
+📂 Category: {category}
+🚨 Priority: {priority}
+🎫 Tracking ID: {tracking_id}
+
+You can track your complaint status here: http://127.0.0.1:5000/track/{tracking_id}
+
+Thank you,
+GrievTech Team
+"""
+                mail.send(msg)
+        except Exception as ex:
+            print("Failed to send submission email:", ex)
+
         return redirect('/dashboard')
 
     return render_template('submit.html')
@@ -351,20 +359,112 @@ def dashboard():
     user_id = session['user_id']
     lang = session.get('lang', 'en')
 
-    cursor = db.cursor(dictionary=True)
-    # Only fetch complaints belonging to the user
-    cursor.execute("""
-        SELECT * 
-        FROM grievances 
-        WHERE user_id = %s
-    """, (user_id,))
-    data = cursor.fetchall()
+    try:
+        res = supabase.table('grievances').select('*').eq('user_id', user_id).execute()
+        data = res.data
+    except Exception as e:
+        print("Dashboard query error:", e)
+        data = []
 
     for g in data:
         g['title'] = dynamic_translate(g['title'], lang)
         g['description'] = dynamic_translate(g['description'], lang)
+        
+        # Convert created_at and resolved_at ISO strings to Python datetime objects for Jinja2 template formatting
+        if g.get('created_at'):
+            try:
+                # Replace 'Z' with '+00:00' for compatible ISO parsing
+                iso_str = g['created_at'].replace('Z', '+00:00')
+                g['created_at'] = datetime.datetime.fromisoformat(iso_str)
+            except Exception as pe:
+                print("Error parsing created_at:", pe)
+        if g.get('resolved_at'):
+            try:
+                iso_str = g['resolved_at'].replace('Z', '+00:00')
+                g['resolved_at'] = datetime.datetime.fromisoformat(iso_str)
+            except Exception as pe:
+                print("Error parsing resolved_at:", pe)
 
-    return render_template('dashboard.html', grievances=data)
+    # Expose supabase credentials to frontend for Realtime status subscription
+    return render_template('dashboard.html', grievances=data, supabase_url=SUPABASE_URL, supabase_key=SUPABASE_KEY)
+
+
+# =========================
+# TRACK BY COMPLAINT ID
+# =========================
+@app.route('/track', methods=['GET', 'POST'])
+def track_complaint_empty():
+    if request.method == 'POST':
+        tracking_id = request.form.get('tracking_id', '').strip()
+        return redirect(url_for('track_complaint', tracking_id=tracking_id))
+    return render_template('track.html')
+
+@app.route('/track/<tracking_id>')
+def track_complaint(tracking_id):
+    try:
+        res = supabase.table('grievances').select('*, users(name)').eq('tracking_id', tracking_id).execute()
+        complaint = res.data[0] if res.data else None
+    except Exception as e:
+        print("Track query error:", e)
+        complaint = None
+
+    if complaint:
+        # Translate title and description
+        lang = session.get('lang', 'en')
+        complaint['title'] = dynamic_translate(complaint['title'], lang)
+        complaint['description'] = dynamic_translate(complaint['description'], lang)
+        complaint['username'] = complaint['users']['name'] if complaint.get('users') else 'Unknown'
+
+        # Determine timeline step
+        # Stages: Submitted, Assigned, In Progress, Resolved, Closed
+        status = complaint['status']
+        active_step = 1 # Submitted
+        if status == 'Assigned':
+            active_step = 2
+        elif status == 'In Progress':
+            active_step = 3
+        elif status == 'Resolved':
+            active_step = 4
+        elif status == 'Closed':
+            active_step = 5
+
+        return render_template('track.html', complaint=complaint, active_step=active_step, tracking_id=tracking_id)
+    else:
+        return render_template('track.html', error="Grievance not found with the specified Tracking ID.", tracking_id=tracking_id)
+
+
+# =========================
+# DETECT DUPLICATE COMPLAINTS (AJAX API)
+# =========================
+@app.route('/detect_duplicates', methods=['POST'])
+def detect_duplicates():
+    try:
+        data = request.json
+        title = data.get('title', '').strip().lower()
+        category = data.get('category', '')
+        if not title or not category:
+            return {"duplicates": []}
+        
+        # Fetch grievances of same category from Supabase
+        res = supabase.table('grievances').select('id, title, status, category').eq('category', category).execute()
+        
+        duplicates = []
+        title_words = set(title.split())
+        for g in res.data:
+            g_title = g['title'].lower()
+            g_words = set(g_title.split())
+            overlap = title_words.intersection(g_words)
+            # If exact match or keyword overlap >= 50% of either
+            if len(overlap) > 0 or title in g_title or g_title in title:
+                duplicates.append({
+                    "id": g['id'],
+                    "title": g['title'],
+                    "status": g['status']
+                })
+        return {"duplicates": duplicates[:5]}
+    except Exception as e:
+        print("Detect duplicates error:", e)
+        return {"duplicates": []}
 
 
 # =========================
@@ -376,9 +476,12 @@ def view_map():
         return redirect('/login')
 
     lang = session.get('lang', 'en')
-    cursor = db.cursor(dictionary=True)
-    cursor.execute("SELECT title, category, priority, latitude, longitude, duplicate_count FROM grievances WHERE latitude IS NOT NULL AND longitude IS NOT NULL")
-    complaints = cursor.fetchall()
+    try:
+        res = supabase.table('grievances').select('title, category, priority, latitude, longitude, duplicate_count').not_.is_('latitude', 'null').not_.is_('longitude', 'null').execute()
+        complaints = res.data
+    except Exception as e:
+        print("Map query error:", e)
+        complaints = []
 
     for c in complaints:
         c['title'] = dynamic_translate(c['title'], lang)
@@ -403,31 +506,31 @@ def admin():
     filter_type = request.args.get('filter', 'active') 
     chart_data = None
 
-    cursor = db.cursor(dictionary=True)
+    lang = session.get('lang', 'en')
 
     # 🔹 1. Fetch Grievances based on filter + category
-    query = "SELECT g.*, u.name as username FROM grievances g LEFT JOIN users u ON g.user_id = u.id WHERE 1=1"
-    params = []
+    try:
+        q = supabase.table('grievances').select('*, users(name)')
 
-    if filter_type == 'active':
-        query += " AND g.status != 'Resolved'"
-    elif filter_type == 'emergency':
-        query += " AND g.priority = 'Emergency' AND g.status != 'Resolved'"
-    elif filter_type == 'resolved':
-        query += " AND g.status = 'Resolved'"
+        if filter_type == 'active':
+            q = q.neq('status', 'Resolved')
+        elif filter_type == 'emergency':
+            q = q.eq('priority', 'Emergency').neq('status', 'Resolved')
+        elif filter_type == 'resolved':
+            q = q.eq('status', 'Resolved')
 
-    if category and category != "All":
-        query += " AND g.category = %s"
-        params.append(category)
+        if category and category != "All":
+            q = q.eq('category', category)
 
-    query += " ORDER BY g.created_at DESC"
-    cursor.execute(query, tuple(params))
-    raw_data = cursor.fetchall()
+        res = q.order('created_at', desc=True).execute()
+        raw_data = res.data
+    except Exception as e:
+        print("Admin grievances query error:", e)
+        raw_data = []
 
-    lang = session.get('lang', 'en')
-    
     grouped_data = {}
     for g in raw_data:
+        g['username'] = g['users']['name'] if g.get('users') else 'Unknown'
         g['title'] = dynamic_translate(g['title'], lang)
         g['description'] = dynamic_translate(g['description'], lang)
 
@@ -467,96 +570,109 @@ def admin():
     data = list(grouped_data.values())
 
     # 🔹 2. STATS (Dynamic for the cards)
-    cursor.execute("""
-        SELECT 
-            SUM(status != 'Resolved') AS total_active,
-            SUM(priority = 'Emergency' AND status != 'Resolved') AS emergency_active,
-            SUM(status = 'Resolved') AS resolved_total
-        FROM grievances
-    """)
-    stats_raw = cursor.fetchone()
+    try:
+        stats_res = supabase.table('grievances').select('status, priority').execute()
+        total_active = sum(1 for g in stats_res.data if g['status'] != 'Resolved')
+        emergency_active = sum(1 for g in stats_res.data if g['priority'] == 'Emergency' and g['status'] != 'Resolved')
+        resolved_total = sum(1 for g in stats_res.data if g['status'] == 'Resolved')
+    except Exception as e:
+        print("Stats calculation error:", e)
+        total_active = emergency_active = resolved_total = 0
+
     stats = {
-        'total': stats_raw['total_active'] or 0,
-        'emergency': stats_raw['emergency_active'] or 0,
-        'resolved': stats_raw['resolved_total'] or 0
+        'total': total_active,
+        'emergency': emergency_active,
+        'resolved': resolved_total
     }
 
     # ALERT
-    cursor.execute("""
-        SELECT COUNT(*) AS emergency_pending
-        FROM grievances
-        WHERE priority='Emergency' AND status!='Resolved'
-    """)
-    alert = cursor.fetchone()
+    alert = {
+        'emergency_pending': emergency_active
+    }
 
     # GRAPH DATA
-    if period == "weekly":
-        cursor.execute("""
-            SELECT DAYNAME(created_at) AS label,
-                   SUM(status='Pending') AS pending,
-                   SUM(status='In Progress') AS progress,
-                   SUM(status='Resolved') AS resolved
-            FROM grievances
-            GROUP BY DAYNAME(created_at)
-        """)
-        chart_data = cursor.fetchall()
+    if period == "weekly" or period == "monthly":
+        try:
+            chart_res = supabase.table('grievances').select('created_at, status').execute()
+            
+            if period == "weekly":
+                weekly_data = {}
+                for g in chart_res.data:
+                    dt_str = g['created_at'].split('T')[0]
+                    dt = datetime.datetime.strptime(dt_str, '%Y-%m-%d')
+                    day_name = dt.strftime('%A')
+                    
+                    if day_name not in weekly_data:
+                        weekly_data[day_name] = {'label': day_name, 'pending': 0, 'progress': 0, 'resolved': 0}
+                    
+                    status = g['status']
+                    if status == 'Pending':
+                        weekly_data[day_name]['pending'] += 1
+                    elif status == 'In Progress':
+                        weekly_data[day_name]['progress'] += 1
+                    elif status == 'Resolved':
+                        weekly_data[day_name]['resolved'] += 1
+                chart_data = list(weekly_data.values())
 
-    elif period == "monthly":
-        cursor.execute("""
-            SELECT DATE(created_at) AS label,
-                   SUM(status='Pending') AS pending,
-                   SUM(status='In Progress') AS progress,
-                   SUM(status='Resolved') AS resolved
-            FROM grievances
-            GROUP BY DATE(created_at)
-        """)
-        chart_data = cursor.fetchall()
+            elif period == "monthly":
+                monthly_data = {}
+                for g in chart_res.data:
+                    dt_str = g['created_at'].split('T')[0]
+                    if dt_str not in monthly_data:
+                        monthly_data[dt_str] = {'label': dt_str, 'pending': 0, 'progress': 0, 'resolved': 0}
+                    
+                    status = g['status']
+                    if status == 'Pending':
+                        monthly_data[dt_str]['pending'] += 1
+                    elif status == 'In Progress':
+                        monthly_data[dt_str]['progress'] += 1
+                    elif status == 'Resolved':
+                        monthly_data[dt_str]['resolved'] += 1
+                # Sort by date key
+                chart_data = [monthly_data[d] for d in sorted(monthly_data.keys())]
+        except Exception as e:
+            print("Chart generation error:", e)
+            chart_data = []
 
     # 📍 FETCH MAP COMPLAINTS (Respects Filter)
-    map_query = """
-        SELECT g.id as complaint_id, g.title, g.category, g.priority, g.duplicate_count,
-               g.latitude, g.longitude, u.name as username, g.status, g.id as loc_id
-        FROM grievances g
-        LEFT JOIN users u ON g.user_id = u.id
-        WHERE g.latitude IS NOT NULL AND g.longitude IS NOT NULL
-    """
-    map_params = []
+    try:
+        map_q = supabase.table('grievances').select('*, users(name)').not_.is_('latitude', 'null').not_.is_('longitude', 'null')
 
-    if filter_type == 'active':
-        map_query += " AND g.status != 'Resolved'"
-    elif filter_type == 'emergency':
-        map_query += " AND g.priority = 'Emergency' AND g.status != 'Resolved'"
-    elif filter_type == 'resolved':
-        map_query += " AND g.status = 'Resolved'"
+        if filter_type == 'active':
+            map_q = map_q.neq('status', 'Resolved')
+        elif filter_type == 'emergency':
+            map_q = map_q.eq('priority', 'Emergency').neq('status', 'Resolved')
+        elif filter_type == 'resolved':
+            map_q = map_q.eq('status', 'Resolved')
 
-    if category and category != "All":
-        map_query += " AND g.category = %s"
-        map_params.append(category)
+        if category and category != "All":
+            map_q = map_q.eq('category', category)
 
-    cursor.execute(map_query, tuple(map_params))
-    map_complaints = cursor.fetchall()
-    for c in map_complaints:
-        c['title'] = dynamic_translate(c['title'], lang)
-        
-        # 🚀 MAP OVERRIDE: Only override if it's the primary report of that grievance
-        cursor.execute("SELECT file_path, latitude, longitude FROM grievances WHERE id=%s", (c['complaint_id'],))
-        row = cursor.fetchone()
-        fpath = row['file_path'] if row else ""
-        orig_lat = row['latitude'] if row else None
-        orig_lon = row['longitude'] if row else None
-
-        if c['latitude'] == orig_lat and c['longitude'] == orig_lon:
+        map_res = map_q.execute()
+        map_complaints = []
+        for c in map_res.data:
+            c['title'] = dynamic_translate(c['title'], lang)
+            c['username'] = c['users']['name'] if c.get('users') else 'Unknown'
+            c['complaint_id'] = c['id']
+            c['loc_id'] = c['id']
+            
+            # MAP OVERRIDE
+            fpath = c['file_path'] or ""
             if fpath == 'water3.jpeg':
                 c['latitude'], c['longitude'] = 14.394083, 74.534866
             elif fpath == 'water4.jpeg':
                 c['latitude'], c['longitude'] = 13.115446, 77.479533
             elif fpath == 'water1.jpeg':
                 c['latitude'], c['longitude'] = 13.11546, 77.479541
-            
-        if c['latitude']:
-            c['latitude'] = float(c['latitude'])
-        if c['longitude']:
-            c['longitude'] = float(c['longitude'])
+                
+            if c['latitude']:
+                c['latitude'] = float(c['latitude'])
+            if c['longitude']:
+                c['longitude'] = float(c['longitude'])
+            map_complaints.append(c)
+    except Exception as e:
+        print("Admin map complaints query error:", e)
+        map_complaints = []
 
     return render_template(
         'admin_dashboard.html',
@@ -567,6 +683,125 @@ def admin():
         chart_data=chart_data,
         period=period,
         map_complaints=map_complaints
+    )
+
+
+# =========================
+# ADMIN ANALYTICS DASHBOARD
+# =========================
+@app.route('/admin/analytics')
+def admin_analytics():
+    if 'user_id' not in session or session.get('role') != 'admin':
+        return redirect('/login')
+
+    try:
+        res = supabase.table('grievances').select('*').execute()
+        all_grievances = res.data
+    except Exception as e:
+        print("Analytics select error:", e)
+        all_grievances = []
+
+    total = len(all_grievances)
+    pending = sum(1 for g in all_grievances if g['status'] == 'Pending')
+    assigned = sum(1 for g in all_grievances if g['status'] == 'Assigned')
+    progress = sum(1 for g in all_grievances if g['status'] == 'In Progress')
+    resolved = sum(1 for g in all_grievances if g['status'] == 'Resolved')
+    closed = sum(1 for g in all_grievances if g['status'] == 'Closed')
+
+    # Department-wise (category) stats
+    cat_stats = {}
+    for g in all_grievances:
+        cat = g['category']
+        cat_stats[cat] = cat_stats.get(cat, 0) + 1
+
+    # Monthly trends
+    monthly_stats = {}
+    for g in all_grievances:
+        if g.get('created_at'):
+            month_str = g['created_at'].split('-')[0] + '-' + g['created_at'].split('-')[1] # YYYY-MM
+            monthly_stats[month_str] = monthly_stats.get(month_str, 0) + 1
+
+    # Sort monthly stats keys
+    monthly_labels = sorted(monthly_stats.keys())
+    monthly_values = [monthly_stats[m] for m in monthly_labels]
+
+    # Map month label from YYYY-MM to Month Name
+    month_names = {
+        '01': 'Jan', '02': 'Feb', '03': 'Mar', '04': 'Apr', '05': 'May', '06': 'Jun',
+        '07': 'Jul', '08': 'Aug', '09': 'Sep', '10': 'Oct', '11': 'Nov', '12': 'Dec'
+    }
+    friendly_monthly_labels = []
+    for ml in monthly_labels:
+        yr, mn = ml.split('-')
+        friendly_monthly_labels.append(f"{month_names.get(mn, mn)} {yr}")
+
+    return render_template(
+        'admin_analytics.html',
+        stats={
+            'total': total,
+            'pending': pending,
+            'assigned': assigned,
+            'progress': progress,
+            'resolved': resolved,
+            'closed': closed
+        },
+        cat_labels=list(cat_stats.keys()),
+        cat_values=list(cat_stats.values()),
+        monthly_labels=friendly_monthly_labels,
+        monthly_values=monthly_values
+    )
+
+
+# =========================
+# OFFICER DASHBOARD
+# =========================
+@app.route('/officer')
+def officer_dashboard():
+    if 'user_id' not in session or session.get('role') != 'officer':
+        return redirect('/login')
+
+    user_id = session['user_id']
+    lang = session.get('lang', 'en')
+
+    try:
+        user_res = supabase.table('users').select('department').eq('id', user_id).execute()
+        department = user_res.data[0]['department'] if user_res.data and user_res.data[0].get('department') else 'Water'
+    except Exception as e:
+        print("Officer query error:", e)
+        department = 'Water'
+
+    try:
+        res = supabase.table('grievances').select('*, users(name)').eq('category', department).order('created_at', desc=True).execute()
+        raw_data = res.data
+    except Exception as e:
+        print("Officer grievances query error:", e)
+        raw_data = []
+
+    data = []
+    for g in raw_data:
+        g['username'] = g['users']['name'] if g.get('users') else 'Unknown'
+        g['title'] = dynamic_translate(g['title'], lang)
+        g['description'] = dynamic_translate(g['description'], lang)
+        
+        # Convert created_at and resolved_at ISO strings to Python datetime objects for Jinja2 template formatting
+        if g.get('created_at'):
+            try:
+                iso_str = g['created_at'].replace('Z', '+00:00')
+                g['created_at'] = datetime.datetime.fromisoformat(iso_str)
+            except Exception as pe:
+                print("Error parsing created_at:", pe)
+        if g.get('resolved_at'):
+            try:
+                iso_str = g['resolved_at'].replace('Z', '+00:00')
+                g['resolved_at'] = datetime.datetime.fromisoformat(iso_str)
+            except Exception as pe:
+                print("Error parsing resolved_at:", pe)
+        data.append(g)
+
+    return render_template(
+        'officer_dashboard.html',
+        grievances=data,
+        department=department
     )
 
 
@@ -589,68 +824,74 @@ def set_language(lang):
 # UPDATE STATUS
 @app.route('/update/<int:id>', methods=['POST'])
 def update_status(id):
-    if 'user_id' not in session or session.get('role') != 'admin':
+    if 'user_id' not in session or session.get('role') not in ['admin', 'officer']:
         return redirect('/login')
 
     new_status = request.form.get('status')
 
-    db_conn = get_db()
-    cursor = db_conn.cursor(dictionary=True)
+    try:
+        # Get old data + user email
+        res = supabase.table('grievances').select('title, latitude, longitude, status, created_at, resolved_at, users(email)').eq('id', id).execute()
+        data = res.data[0] if res.data else None
+    except Exception as e:
+        print("Update status query error:", e)
+        data = None
 
-    # 🔹 Get old data + user email
-    cursor.execute("""
-        SELECT g.title, g.latitude, g.longitude, g.status, g.created_at, g.resolved_at, u.email
-        FROM grievances g
-        JOIN users u ON g.user_id = u.id
-        WHERE g.id = %s
-    """, (id,))
-    data = cursor.fetchone()
+    if not data:
+        return redirect(request.referrer or '/dashboard')
 
     old_status = data['status']
-    email = data['email']
+    email = data['users']['email'] if data.get('users') else ''
     title = data['title']
-    created = data['created_at'].strftime('%d-%m-%Y')
+    
+    created_dt = datetime.datetime.fromisoformat(data['created_at']) if data.get('created_at') else datetime.datetime.now()
+    created = created_dt.strftime('%d-%m-%Y')
 
-    # 🔹 UPDATE STATUS + RESOLVED DATE (Sync across identical locations)
-    emails_to_notify = [email]
+    # UPDATE STATUS + RESOLVED DATE (Sync across identical locations)
+    emails_to_notify = [email] if email else []
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
-    if data['latitude'] is not None and data['longitude'] is not None:
-        # Fetch all emails for this exact location and title
-        cursor.execute("""
-            SELECT u.email FROM grievances g
-            JOIN users u ON g.user_id = u.id
-            WHERE g.title = %s AND g.latitude = %s AND g.longitude = %s
-        """, (data['title'], data['latitude'], data['longitude']))
-        emails_to_notify = [row['email'] for row in cursor.fetchall()]
+    try:
+        if data['latitude'] is not None and data['longitude'] is not None:
+            # Fetch all emails for this exact location and title
+            res_emails = supabase.table('grievances').select('users(email)').eq('title', data['title']).eq('latitude', data['latitude']).eq('longitude', data['longitude']).execute()
+            for row in res_emails.data:
+                if row.get('users') and row['users'].get('email'):
+                    emails_to_notify.append(row['users']['email'])
 
-        if new_status == "Resolved":
-            cursor.execute("""
-                UPDATE grievances 
-                SET status=%s, resolved_at=NOW()
-                WHERE title=%s AND latitude=%s AND longitude=%s
-            """, (new_status, data['title'], data['latitude'], data['longitude']))
+            if new_status in ["Resolved", "Closed"]:
+                supabase.table('grievances').update({
+                    'status': new_status,
+                    'resolved_at': now_iso
+                }).eq('title', data['title']).eq('latitude', data['latitude']).eq('longitude', data['longitude']).execute()
+            else:
+                supabase.table('grievances').update({
+                    'status': new_status,
+                    'resolved_at': None
+                }).eq('title', data['title']).eq('latitude', data['latitude']).eq('longitude', data['longitude']).execute()
         else:
-            cursor.execute("""
-                UPDATE grievances 
-                SET status=%s, resolved_at=NULL
-                WHERE title=%s AND latitude=%s AND longitude=%s
-            """, (new_status, data['title'], data['latitude'], data['longitude']))
-    else:
-        if new_status == "Resolved":
-            cursor.execute("UPDATE grievances SET status=%s, resolved_at=NOW() WHERE id=%s", (new_status, id))
-        else:
-            cursor.execute("UPDATE grievances SET status=%s, resolved_at=NULL WHERE id=%s", (new_status, id))
+            if new_status in ["Resolved", "Closed"]:
+                supabase.table('grievances').update({
+                    'status': new_status,
+                    'resolved_at': now_iso
+                }).eq('id', id).execute()
+            else:
+                supabase.table('grievances').update({
+                    'status': new_status,
+                    'resolved_at': None
+                }).eq('id', id).execute()
+    except Exception as e:
+        print("Update status error:", e)
 
-    if new_status == "Resolved":
-        resolved_text = "Resolved on: " + data['created_at'].strftime('%d-%m-%Y')
+    if new_status in ["Resolved", "Closed"]:
+        resolved_text = f"Resolved on: {datetime.datetime.now().strftime('%d-%m-%Y')}"
     else:
         resolved_text = "Not yet resolved"
 
-    db.commit()
-
-    # 🔹 SEND EMAIL (KEEPING YOUR FEATURE)
+    # SEND EMAIL
     try:
         for user_email in set(emails_to_notify): # Unique emails
+            if not user_email: continue
             msg = Message(
                 subject="Grievance Status Updated",
                 sender=app.config['MAIL_USERNAME'],
@@ -678,7 +919,7 @@ GrievTech Team
     except Exception as e:
         print("Email error:", e)
 
-    return redirect('/admin')
+    return redirect(request.referrer or '/dashboard')
 
 
 # DELETE COMPLAINT
@@ -687,25 +928,30 @@ def delete_complaint(id):
     if 'user_id' not in session or session.get('role') != 'admin':
         return redirect('/login')
 
-    db_conn = get_db()
-    cursor = db_conn.cursor(dictionary=True)
-    
-    # 1. Fetch file path to delete from storage
-    cursor.execute("SELECT file_path FROM grievances WHERE id = %s", (id,))
-    row = cursor.fetchone()
-    if row and row['file_path']:
-        file_path = os.path.join(app.config['UPLOAD_FOLDER'], row['file_path'])
-        if os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-            except Exception as e:
-                print(f"Error deleting file: {e}")
+    try:
+        # 1. Fetch file path to delete from storage
+        res = supabase.table('grievances').select('file_path').eq('id', id).execute()
+        row = res.data[0] if res.data else None
+        
+        if row and row['file_path']:
+            file_path = os.path.join(app.config['UPLOAD_FOLDER'], row['file_path'])
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except Exception as e:
+                    print(f"Error deleting file locally: {e}")
 
-    # 2. Delete from database
-    cursor.execute("DELETE FROM grievances WHERE id = %s", (id,))
-    db_conn.commit()
-    cursor.close()
-    
+            # Delete from Supabase Storage
+            try:
+                supabase.storage.from_('uploads').remove([row['file_path']])
+            except Exception as e:
+                print("Error deleting file from storage:", e)
+
+        # 2. Delete from database
+        supabase.table('grievances').delete().eq('id', id).execute()
+    except Exception as e:
+        print("Delete complaint error:", e)
+        
     return redirect('/admin')
 
 
@@ -748,13 +994,14 @@ def chatbot():
         response = dynamic_translate(response, lang)
 
     # Store in DB
-    cursor = db.cursor()
-    cursor.execute(
-        "INSERT INTO chat_logs (user_id, user_message, bot_response) VALUES (%s, %s, %s)",
-        (user_id, user_msg, response)
-    )
-    db.commit()
-    cursor.close()
+    try:
+        supabase.table('chat_logs').insert({
+            'user_id': user_id,
+            'user_message': user_msg,
+            'bot_response': response
+        }).execute()
+    except Exception as e:
+        print("Chat logs insert error:", e)
 
     return {"response": response}
 
@@ -772,14 +1019,16 @@ def submit_feedback():
     message = request.form.get('message')
     
     if rating and message:
-        cursor = db.cursor()
-        cursor.execute(
-            "INSERT INTO feedback (user_id, rating, message) VALUES (%s, %s, %s)",
-            (user_id, rating, message)
-        )
-        db.commit()
-        cursor.close()
-        return redirect('/dashboard?status=feedback_submitted')
+        try:
+            supabase.table('feedback').insert({
+                'user_id': user_id,
+                'rating': int(rating),
+                'message': message
+            }).execute()
+            return redirect('/dashboard?status=feedback_submitted')
+        except Exception as e:
+            print("Feedback insert error:", e)
+            return redirect('/dashboard?error=feedback_failed')
     
     return redirect('/dashboard?error=feedback_failed')
 
@@ -792,16 +1041,34 @@ def export_excel():
     if 'user_id' not in session or session.get('role') != 'admin':
         return redirect('/login')
 
-    cursor = db.cursor(dictionary=True)
-    # Fetch all grievances with user details
-    cursor.execute("""
-        SELECT g.id, u.name as username, u.email, g.category, g.title, g.description, 
-               g.priority, g.status, g.created_at, g.resolved_at, g.duplicate_count
-        FROM grievances g
-        LEFT JOIN users u ON g.user_id = u.id
-        ORDER BY g.created_at DESC
-    """)
-    records = cursor.fetchall()
+    try:
+        res = supabase.table('grievances').select('*, users(name, email)').order('created_at', desc=True).execute()
+        raw_records = res.data
+    except Exception as e:
+        print("Export select error:", e)
+        raw_records = []
+
+    records = []
+    for row in raw_records:
+        username = row['users']['name'] if row.get('users') else 'Unknown'
+        email = row['users']['email'] if row.get('users') else 'Unknown'
+        
+        created_at_dt = datetime.datetime.fromisoformat(row['created_at']) if row.get('created_at') else None
+        resolved_at_dt = datetime.datetime.fromisoformat(row['resolved_at']) if row.get('resolved_at') else None
+
+        records.append({
+            'id': row['id'],
+            'username': username,
+            'email': email,
+            'category': row['category'],
+            'title': row['title'],
+            'description': row['description'],
+            'priority': row['priority'],
+            'status': row['status'],
+            'created_at': created_at_dt,
+            'resolved_at': resolved_at_dt,
+            'duplicate_count': row['duplicate_count']
+        })
 
     # Generate CSV
     output = io.StringIO()
@@ -830,6 +1097,20 @@ def export_excel():
     response = Response(output.getvalue(), mimetype='text/csv')
     response.headers['Content-Disposition'] = 'attachment; filename=GrievTech_Export.csv'
     return response
+
+
+# =========================
+# FILE STORAGE ROUTE REDIRECT (Preserves template url_for references)
+# =========================
+@app.route('/static/uploads/<path:filename>')
+def serve_upload(filename):
+    try:
+        url = supabase.storage.from_('uploads').get_public_url(filename)
+        return redirect(url)
+    except Exception as e:
+        print("Error serving upload from Supabase storage:", e)
+        # Fallback to local files if Supabase storage has an issue
+        return redirect(url_for('static', filename='uploads/' + filename))
 
 
 if __name__ == '__main__':

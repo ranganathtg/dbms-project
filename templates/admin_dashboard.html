@@ -80,9 +80,13 @@
         <h2 class="text-center mb-3">{{ _('admin_dashboard') }}</h2>
 
         <div class="text-end mb-3">
+            <a href="/admin/analytics" class="btn btn-success me-2">
+                <i class="fa fa-chart-line"></i> View Analytics
+            </a>
             <a href="/logout" class="btn btn-primary">
                 <i class="fa fa-sign-out-alt"></i> {{ _('logout') }}</a>
         </div>
+
 
         <!-- STATS -->
         <style>
@@ -255,12 +259,17 @@
                         <td>
                             <span class="badge 
                             {% if g.status=='Pending' %}bg-danger
-                            {% elif g.status=='In Progress' %}bg-warning text-dark
+                            {% elif g.status in ['Assigned', 'In Progress'] %}bg-warning text-dark
                             {% else %}bg-success{% endif %}" style="font-size: 0.7rem;">
-                                {{ _('pending') if g.status=='Pending' else (_('in_progress') if g.status=='In Progress'
-                                else _('resolved')) }}
+                                {% if g.status == 'Pending' %}{{ _('pending') }}
+                                {% elif g.status == 'Assigned' %}Assigned
+                                {% elif g.status == 'In Progress' %}{{ _('in_progress') }}
+                                {% elif g.status == 'Resolved' %}{{ _('resolved') }}
+                                {% elif g.status == 'Closed' %}Closed
+                                {% else %}{{ g.status }}{% endif %}
                             </span>
                         </td>
+
 
                         <td>
                             {% if g.file_path %}
@@ -485,8 +494,10 @@
                     <form method="POST" action="/update/${c.id}" class="d-flex me-1">
                         <select name="status" class="form-select form-select-sm me-1" style="width: 100px; font-size: 0.7rem;">
                             <option value="Pending" ${c.status === 'Pending' ? 'selected' : ''}>Pending</option>
+                            <option value="Assigned" ${c.status === 'Assigned' ? 'selected' : ''}>Assigned</option>
                             <option value="In Progress" ${c.status === 'In Progress' ? 'selected' : ''}>In Progress</option>
                             <option value="Resolved" ${c.status === 'Resolved' ? 'selected' : ''}>Resolved</option>
+                            <option value="Closed" ${c.status === 'Closed' ? 'selected' : ''}>Closed</option>
                         </select>
                         <button type="submit" class="btn btn-sm btn-dark" style="font-size: 0.7rem;">Update</button>
                     </form>

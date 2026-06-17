@@ -108,9 +108,10 @@
             <img src="{{ url_for('static', filename='images/logo.jpeg') }}" alt="Logo">
         </div>
         <div class="title">GrievTech</div>
-        <div class="lang">
+        <div class="lang d-flex align-items-center gap-2">
+            <a href="/track" class="btn btn-sm text-dark m-0" style="border: 2px solid black; border-radius: 8px; font-weight: bold; background: white; padding: 4px 10px; font-size: 14px; text-decoration: none;">🔍 {{ _('track_complaint') }}</a>
             <select onchange="location = this.value;" class="form-select form-select-sm d-inline-block w-auto"
-                style="border-radius: 8px; border: 2px solid black;">
+                style="border-radius: 8px; border: 2px solid black; margin: 0;">
                 <option value="/set_language/en" {% if lang=='en' %}selected{% endif %}>English</option>
                 <option value="/set_language/kn" {% if lang=='kn' %}selected{% endif %}>ಕನ್ನಡ</option>
                 <option value="/set_language/hi" {% if lang=='hi' %}selected{% endif %}>हिंदी</option>
@@ -129,6 +130,8 @@
                 <a href="/register" class="btn btn-lg fw-bold px-5">{{ _('register') }}</a>
                 <a href="/login" class="btn btn-lg fw-bold px-5 bg-white text-dark" style="border: 2px solid black;">{{
                     _('login') }}</a>
+                <a href="/track" class="btn btn-lg fw-bold px-5 bg-white text-dark" style="border: 2px solid black;">{{
+                    _('track_complaint') }}</a>
             </div>
         </div>
     </header>

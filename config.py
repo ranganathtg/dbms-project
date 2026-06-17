@@ -1,8 +1,10 @@
-import mysql.connector
+import os
+from dotenv import load_dotenv
+from supabase import create_client, Client
 
-db = mysql.connector.connect(
-    host="localhost",
-    user="root",
-    password="Ranga@2005",
-    database="grievance_db"
+load_dotenv()
+
+supabase: Client = create_client(
+    os.getenv("SUPABASE_URL"),
+    os.getenv("SUPABASE_KEY")
 )

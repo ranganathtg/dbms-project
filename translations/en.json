@@ -1,6 +1,7 @@
 {
     "register": "Register",
     "login": "Login",
+    "track_complaint": "Track Complaint",
     "email": "Email",
     "password": "Password",
     "name": "Name",

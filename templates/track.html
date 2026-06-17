@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Track Complaint Status</title>
+
+    <!-- Bootstrap -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <!-- CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+
+<body class="bg-light">
+
+    <!-- TOP HEADER -->
+    <div class="top-header">
+        <div class="logo">
+            <img src="{{ url_for('static', filename='images/logo.jpeg') }}" alt="logo">
+        </div>
+        <div class="title">GrievTech</div>
+        <!-- Right: Language -->
+        <div class="lang d-flex align-items-center gap-2">
+            <a href="/track" class="btn btn-sm text-dark m-0" style="border: 2px solid black; border-radius: 8px; font-weight: bold; background: white; padding: 4px 10px; font-size: 14px; text-decoration: none;">🔍 {{ _('track_complaint') }}</a>
+            <select onchange="location = this.value;" class="form-select form-select-sm d-inline-block w-auto m-0"
+                style="border-radius: 8px; padding: 4px 8px; border: 2px solid black;">
+                <option value="/set_language/en" {% if lang=='en' %}selected{% endif %}>English</option>
+                <option value="/set_language/kn" {% if lang=='kn' %}selected{% endif %}>ಕನ್ನಡ</option>
+                <option value="/set_language/hi" {% if lang=='hi' %}selected{% endif %}>हिंदी</option>
+                <option value="/set_language/ta" {% if lang=='ta' %}selected{% endif %}>தமிழ்</option>
+                <option value="/set_language/te" {% if lang=='te' %}selected{% endif %}>తెలుగు</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- MAIN CONTAINER -->
+    <div class="container d-flex flex-column align-items-center mt-5 pt-4">
+
+        <div class="card p-4 shadow mb-4" style="width: 550px; border: 2px solid black; border-radius: 15px;">
+            <h3 class="text-center mb-3">🎫 Track Your Grievance</h3>
+            
+            <form method="POST" action="/track" class="d-flex mb-3">
+                <input type="text" name="tracking_id" class="form-control me-2" placeholder="Enter Tracking ID (e.g. GT-XXXXXX)" value="{{ tracking_id or '' }}" required style="margin:0;">
+                <button type="submit" class="btn btn-primary" style="margin:0; min-width: 100px;">Track</button>
+            </form>
+
+            {% if error %}
+            <div class="alert alert-danger text-center mb-0" style="border-radius: 8px;">
+                ❌ {{ error }}
+            </div>
+            {% endif %}
+        </div>
+
+        {% if complaint %}
+        <!-- COMPLAINT DETAILS & TIMELINE CARD -->
+        <div class="card p-4 shadow mb-5" style="width: 550px; border: 2px solid black; border-radius: 15px; text-align: left;">
+            <div class="d-flex justify-content-between align-items-start">
+                <h4 style="color: #4b0082; font-weight: bold;">{{ complaint.title }}</h4>
+                <span class="badge bg-secondary">{{ complaint.category }}</span>
+            </div>
+            <p class="text-muted" style="font-size: 13px;">Grievance ID: <b>#{{ complaint.id }}</b> | Tracking ID: <b>{{ complaint.tracking_id }}</b></p>
+            
+            <hr>
+            
+            <div class="mb-3">
+                <h5>📋 Description</h5>
+                <p class="text-dark">{{ complaint.description }}</p>
+            </div>
+
+            <!-- VISUAL TIMELINE -->
+            <div class="my-4">
+                <h5 class="mb-3">⏳ Status Timeline</h5>
+                
+                <div class="timeline-container">
+                    <div class="timeline-line"></div>
+                    <!-- Timeline progress percentage calculation based on active step -->
+                    {% set progress_width = (active_step - 1) * 25 %}
+                    <div class="timeline-progress" style="width: {{ progress_width }}%;"></div>
+                    
+                    <!-- Step 1: Submitted -->
+                    <div class="timeline-step {% if active_step >= 1 %}active{% endif %} {% if active_step > 1 %}completed{% endif %}">
+                        {% if active_step > 1 %}✓{% else %}1{% endif %}
+                        <div class="timeline-label">Submitted</div>
+                    </div>
+                    
+                    <!-- Step 2: Assigned -->
+                    <div class="timeline-step {% if active_step >= 2 %}active{% endif %} {% if active_step > 2 %}completed{% endif %}">
+                        {% if active_step > 2 %}✓{% else %}2{% endif %}
+                        <div class="timeline-label">Assigned</div>
+                    </div>
+                    
+                    <!-- Step 3: In Progress -->
+                    <div class="timeline-step {% if active_step >= 3 %}active{% endif %} {% if active_step > 3 %}completed{% endif %}">
+                        {% if active_step > 3 %}✓{% else %}3{% endif %}
+                        <div class="timeline-label">In Progress</div>
+                    </div>
+                    
+                    <!-- Step 4: Resolved -->
+                    <div class="timeline-step {% if active_step >= 4 %}active{% endif %} {% if active_step > 4 %}completed{% endif %}">
+                        {% if active_step > 4 %}✓{% else %}4{% endif %}
+                        <div class="timeline-label">Resolved</div>
+                    </div>
+                    
+                    <!-- Step 5: Closed -->
+                    <div class="timeline-step {% if active_step >= 5 %}active{% endif %}">
+                        5
+                        <div class="timeline-label">Closed</div>
+                    </div>
+                </div>
+            </div>
+
+            <hr class="mt-5">
+            
+            <div class="row" style="font-size:14px;">
+                <div class="col-6">
+                    <p class="mb-1 text-muted">Submitted By</p>
+                    <p class="fw-bold">{{ complaint.username }}</p>
+                </div>
+                <div class="col-6">
+                    <p class="mb-1 text-muted">Current Status</p>
+                    <span class="status {% if complaint.status == 'Pending' %}pending{% elif complaint.status in ['Assigned', 'In Progress'] %}progress{% else %}resolved{% endif %}">
+                        {{ complaint.status }}
+                    </span>
+                </div>
+            </div>
+
+            {% if complaint.file_path %}
+            <div class="mt-3">
+                <p class="mb-1 text-muted">Attachment</p>
+                {% if complaint.file_path.endswith('.jpg') or complaint.file_path.endswith('.png') or complaint.file_path.endswith('.jpeg') %}
+                <img src="/static/uploads/{{ complaint.file_path }}" class="img-fluid rounded" style="max-height: 250px; border: 1px solid #ddd;">
+                {% else %}
+                <a href="/static/uploads/{{ complaint.file_path }}" target="_blank" class="btn btn-outline-secondary btn-sm">
+                    📄 View Uploaded Document
+                </a>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        <div style="width: 550px; text-align: center;">
+            <a href="/" class="btn btn-outline-secondary w-100 mb-3" style="border: 2px solid black;">
+                ← Back to Home
+            </a>
+        </div>
+
+    </div>
+
+</body>
+
+</html>

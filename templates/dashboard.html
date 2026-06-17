@@ -23,9 +23,10 @@
         </div>
 
         <!-- Right: Language -->
-        <div class="lang">
-            <select onchange="location = this.value;" class="form-select form-select-sm d-inline-block w-auto"
-                style="border-radius: 8px; padding: 4px 8px;">
+        <div class="lang d-flex align-items-center gap-2">
+            <a href="/track" class="btn btn-sm text-dark m-0" style="border: 2px solid black; border-radius: 8px; font-weight: bold; background: white; padding: 4px 10px; font-size: 14px; text-decoration: none;">🔍 {{ _('track_complaint') }}</a>
+            <select onchange="location = this.value;" class="form-select form-select-sm d-inline-block w-auto m-0"
+                style="border-radius: 8px; padding: 4px 8px; border: 2px solid black;">
                 <option value="/set_language/en" {% if lang=='en' %}selected{% endif %}>English</option>
                 <option value="/set_language/kn" {% if lang=='kn' %}selected{% endif %}>ಕನ್ನಡ</option>
                 <option value="/set_language/hi" {% if lang=='hi' %}selected{% endif %}>हिंदी</option>
@@ -52,6 +53,7 @@
             <div style="overflow-x:auto;">
                 <table>
                     <tr>
+                        <th>Tracking ID</th>
                         <th>{{ _('category') }}</th>
                         <th>{{ _('title') }}</th>
                         <th>{{ _('description') }}</th>
@@ -59,21 +61,27 @@
                         <th>{{ _('created') }}</th>
                         <th>{{ _('resolved') }}</th>
                         <th>{{ _('file') }}</th>
+                        <th>Track</th>
                     </tr>
 
                     {% for g in grievances %}
-                    <tr class="{{ 'emergency-row' if g.priority == 'Emergency' else '' }}">
+                    <tr id="row-{{ g.id }}" class="{{ 'emergency-row' if g.priority == 'Emergency' else '' }}">
 
+                        <td><code style="font-weight:bold; color: #4b0082;">{{ g.tracking_id or 'N/A' }}</code></td>
                         <td>{{ g.category }}</td>
                         <td>{{ g.title }}</td>
                         <td>{{ g.description }}</td>
 
                         <!-- 🔹 STATUS -->
                         <td>
-                            <span
-                                class="status {{ 'pending' if g.status == 'Pending' else ('progress' if g.status == 'In Progress' else 'resolved') }}">
-                                {{ _('pending') if g.status=='Pending' else (_('in_progress') if g.status=='In Progress'
-                                else _('resolved')) }}
+                            <span id="status-badge-{{ g.id }}"
+                                class="status {{ 'pending' if g.status == 'Pending' else ('progress' if g.status in ['Assigned', 'In Progress'] else 'resolved') }}">
+                                {% if g.status == 'Pending' %}{{ _('pending') }}
+                                {% elif g.status == 'Assigned' %}Assigned
+                                {% elif g.status == 'In Progress' %}{{ _('in_progress') }}
+                                {% elif g.status == 'Resolved' %}{{ _('resolved') }}
+                                {% elif g.status == 'Closed' %}Closed
+                                {% else %}{{ g.status }}{% endif %}
                             </span>
                         </td>
 
@@ -117,6 +125,15 @@
 
                             {% else %}
                             <span style="color:gray;">No File</span>
+                            {% endif %}
+                        </td>
+
+                        <!-- 🔹 TRACK LINK -->
+                        <td>
+                            {% if g.tracking_id %}
+                            <a href="/track/{{ g.tracking_id }}" class="btn btn-sm btn-outline-primary" style="padding: 2px 8px; font-size:11px; margin:0; border: 1px solid #007bff;">Timeline 📊</a>
+                            {% else %}
+                            -
                             {% endif %}
                         </td>
 
@@ -218,6 +235,46 @@
             body.appendChild(div);
             body.scrollTop = body.scrollHeight;
         }
+    </script>
+
+    <!-- Supabase JS CDN and Real-Time Status Updates -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script>
+        document.addEventListener("DOMContentLoaded", function () {
+            const supabaseUrl = "{{ supabase_url }}";
+            const supabaseKey = "{{ supabase_key }}";
+            
+            if (supabaseUrl && supabaseKey) {
+                const supabaseClient = supabase.createClient(supabaseUrl, supabaseKey);
+                
+                supabaseClient
+                    .channel('realtime-status-updates')
+                    .on(
+                        'postgres_changes',
+                        { event: 'UPDATE', schema: 'public', table: 'grievances' },
+                        payload => {
+                            console.log('Realtime change received:', payload);
+                            const updatedId = payload.new.id;
+                            const newStatus = payload.new.status;
+                            const badge = document.getElementById(`status-badge-${updatedId}`);
+                            
+                            if (badge) {
+                                badge.innerText = newStatus;
+                                badge.className = "status"; // Reset class list
+                                
+                                if (newStatus === "Pending") {
+                                    badge.classList.add("pending");
+                                } else if (newStatus === "Assigned" || newStatus === "In Progress") {
+                                    badge.classList.add("progress");
+                                } else {
+                                    badge.classList.add("resolved");
+                                }
+                            }
+                        }
+                    )
+                    .subscribe();
+            }
+        });
     </script>
 </body>
 

@@ -1,0 +1,7 @@
+Flask
+Flask-Mail
+pillow
+deep-translator
+psycopg2-binary
+supabase
+python-dotenv

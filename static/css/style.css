@@ -197,3 +197,117 @@ input:focus,
 .emergency-row {
     background-color: rgba(255, 0, 0, 0.1);
 }
+
+/* 🔹 COMPLAINT TIMELINE STYLE */
+.timeline-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: relative;
+    margin: 40px 0;
+    padding: 0 10px;
+}
+
+.timeline-line {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: #ddd;
+    z-index: 1;
+    transform: translateY(-50%);
+}
+
+.timeline-progress {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    height: 4px;
+    background: #007bff;
+    z-index: 2;
+    transform: translateY(-50%);
+    transition: width 0.5s ease;
+}
+
+.timeline-step {
+    position: relative;
+    z-index: 3;
+    background: white;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    border: 4px solid #ddd;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-weight: bold;
+    color: #888;
+    transition: 0.3s;
+}
+
+.timeline-step.active {
+    border-color: #007bff;
+    color: #007bff;
+    box-shadow: 0 0 10px rgba(0, 123, 255, 0.5);
+}
+
+.timeline-step.completed {
+    border-color: #28a745;
+    background: #28a745;
+    color: white;
+}
+
+.timeline-label {
+    position: absolute;
+    top: 45px;
+    left: 50%;
+    transform: translateX(-50%);
+    white-space: nowrap;
+    font-size: 12px;
+    font-weight: bold;
+    color: #555;
+}
+
+/* 🔹 ANALYTICS STYLES */
+.analytics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 20px;
+    margin-bottom: 30px;
+}
+
+.analytics-card {
+    background: white;
+    padding: 20px;
+    border-radius: 12px;
+    border: 2px solid black;
+    text-align: center;
+}
+
+.analytics-card h3 {
+    margin: 0 0 10px 0;
+    font-size: 16px;
+    color: #666;
+}
+
+.analytics-card .value {
+    font-size: 32px;
+    font-weight: bold;
+    color: #333;
+}
+
+.charts-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+    gap: 30px;
+    margin-top: 30px;
+}
+
+.chart-box {
+    background: white;
+    padding: 20px;
+    border-radius: 12px;
+    border: 2px solid black;
+    height: 350px;
+}

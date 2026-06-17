@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Admin Analytics Dashboard</title>
+
+    <!-- Bootstrap -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Font Awesome -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+    <!-- CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+
+<body class="bg-light">
+
+    <!-- TOP HEADER -->
+    <div class="top-header">
+        <div class="logo">
+            <img src="{{ url_for('static', filename='images/logo.jpeg') }}" alt="logo">
+        </div>
+        <div class="title">GrievTech Analytics</div>
+        <div class="lang">
+            <a href="/admin" class="btn btn-outline-light btn-sm" style="margin:0; border: 1px solid #4b0082; color: #4b0082; font-weight:bold;">
+                <i class="fa fa-arrow-left"></i> Dashboard
+            </a>
+        </div>
+    </div>
+
+    <!-- MAIN CONTAINER -->
+    <div class="container mt-5 pt-4">
+        <h2 class="text-center mb-4">📊 Performance & Analytics</h2>
+
+        <!-- ANALYTICS CARDS GRID -->
+        <div class="analytics-grid">
+            <div class="analytics-card" style="border: 2px solid #007bff;">
+                <i class="fa fa-folder-open fa-2x text-primary mb-2"></i>
+                <h3>Total Complaints</h3>
+                <div class="value text-primary">{{ stats.total }}</div>
+            </div>
+            
+            <div class="analytics-card" style="border: 2px solid #dc3545;">
+                <i class="fa fa-hourglass-half fa-2x text-danger mb-2"></i>
+                <h3>Pending</h3>
+                <div class="value text-danger">{{ stats.pending }}</div>
+            </div>
+
+            <div class="analytics-card" style="border: 2px solid #ffc107;">
+                <i class="fa fa-spinner fa-2x text-warning mb-2"></i>
+                <h3>In Progress</h3>
+                <div class="value text-warning">{{ stats.progress + stats.assigned }}</div>
+            </div>
+
+            <div class="analytics-card" style="border: 2px solid #28a745;">
+                <i class="fa fa-check-circle fa-2x text-success mb-2"></i>
+                <h3>Resolved & Closed</h3>
+                <div class="value text-success">{{ stats.resolved + stats.closed }}</div>
+            </div>
+        </div>
+
+        <!-- CHARTS SECTION -->
+        <div class="row">
+            <!-- Department/Category Chart -->
+            <div class="col-md-6 mb-4">
+                <div class="chart-box p-3 shadow-sm">
+                    <h5 class="text-center mb-3">🏢 Department-Wise Statistics</h5>
+                    <div style="position: relative; height: 260px; width: 100%;">
+                        <canvas id="categoryChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Monthly Trends Chart -->
+            <div class="col-md-6 mb-4">
+                <div class="chart-box p-3 shadow-sm">
+                    <h5 class="text-center mb-3">📈 Monthly Complaint Trends</h5>
+                    <div style="position: relative; height: 260px; width: 100%;">
+                        <canvas id="trendsChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- DETAILED STATUS SUMMARY TABLE -->
+        <div class="card p-4 shadow-sm mb-5" style="border: 2px solid black; border-radius: 12px;">
+            <h5 class="mb-3"><i class="fa fa-info-circle text-muted me-2"></i> Grievance Status Breakdown</h5>
+            <div class="table-responsive">
+                <table class="table table-striped table-hover mb-0 text-center">
+                    <thead class="table-dark">
+                        <tr>
+                            <th>Status Stage</th>
+                            <th>Count</th>
+                            <th>Percentage</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Submitted / Pending</strong></td>
+                            <td>{{ stats.pending }}</td>
+                            <td>{{ "%.1f" | format(stats.pending / stats.total * 100 if stats.total > 0 else 0) }}%</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Assigned</strong></td>
+                            <td>{{ stats.assigned }}</td>
+                            <td>{{ "%.1f" | format(stats.assigned / stats.total * 100 if stats.total > 0 else 0) }}%</td>
+                        </tr>
+                        <tr>
+                            <td><strong>In Progress</strong></td>
+                            <td>{{ stats.progress }}</td>
+                            <td>{{ "%.1f" | format(stats.progress / stats.total * 100 if stats.total > 0 else 0) }}%</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Resolved</strong></td>
+                            <td>{{ stats.resolved }}</td>
+                            <td>{{ "%.1f" | format(stats.resolved / stats.total * 100 if stats.total > 0 else 0) }}%</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Closed</strong></td>
+                            <td>{{ stats.closed }}</td>
+                            <td>{{ "%.1f" | format(stats.closed / stats.total * 100 if stats.total > 0 else 0) }}%</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <script>
+        // Department / Category Chart (Pie Chart)
+        const catLabels = {{ cat_labels | tojson }};
+        const catValues = {{ cat_values | tojson }};
+        
+        new Chart(document.getElementById('categoryChart'), {
+            type: 'pie',
+            data: {
+                labels: catLabels,
+                datasets: [{
+                    data: catValues,
+                    backgroundColor: [
+                        '#007bff', // Water (Blue)
+                        '#28a745', // Road (Green)
+                        '#ffc107', // Electricity (Yellow)
+                        '#dc3545', // Garbage (Red)
+                        '#6c757d'  // Other (Grey)
+                    ],
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'right'
+                    }
+                }
+            }
+        });
+
+        // Monthly Trends Chart (Line Chart)
+        const monthlyLabels = {{ monthly_labels | tojson }};
+        const monthlyValues = {{ monthly_values | tojson }};
+
+        new Chart(document.getElementById('trendsChart'), {
+            type: 'line',
+            data: {
+                labels: monthlyLabels,
+                datasets: [{
+                    label: 'Complaints Submitted',
+                    data: monthlyValues,
+                    borderColor: '#4b0082',
+                    backgroundColor: 'rgba(75, 0, 130, 0.1)',
+                    borderWidth: 3,
+                    fill: true,
+                    tension: 0.3
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            stepSize: 1
+                        }
+                    }
+                }
+            }
+        });
+    </script>
+
+</body>
+
+</html>
