@@ -824,40 +824,61 @@ def set_language(lang):
 # UPDATE STATUS
 @app.route('/update/<int:id>', methods=['POST'])
 def update_status(id):
-    if 'user_id' not in session or session.get('role') not in ['admin', 'officer']:
-        return redirect('/login')
-
-    new_status = request.form.get('status')
-
     try:
+        if 'user_id' not in session or session.get('role') not in ['admin', 'officer']:
+            return redirect('/login')
+
+        new_status = request.form.get('status')
+
         # Get old data + user email
         res = supabase.table('grievances').select('title, latitude, longitude, status, created_at, resolved_at, users(email)').eq('id', id).execute()
         data = res.data[0] if res.data else None
-    except Exception as e:
-        print("Update status query error:", e)
-        data = None
 
-    if not data:
-        return redirect(request.referrer or '/dashboard')
+        if not data:
+            return redirect(request.referrer or '/dashboard')
 
-    old_status = data['status']
-    email = data['users']['email'] if data.get('users') else ''
-    title = data['title']
-    
-    created_dt = datetime.datetime.fromisoformat(data['created_at']) if data.get('created_at') else datetime.datetime.now()
-    created = created_dt.strftime('%d-%m-%Y')
+        old_status = data['status']
+        
+        # Robust user email extraction
+        email = ""
+        users_data = data.get('users')
+        if users_data:
+            if isinstance(users_data, dict):
+                email = users_data.get('email', '')
+            elif isinstance(users_data, list) and len(users_data) > 0 and users_data[0]:
+                email = users_data[0].get('email', '')
+                
+        title = data['title']
+        
+        created_at_val = data.get('created_at')
+        created_dt = None
+        if created_at_val:
+            try:
+                # Support Z replacement and timezone offset parsing
+                iso_str = created_at_val.replace('Z', '+00:00')
+                created_dt = datetime.datetime.fromisoformat(iso_str)
+            except Exception as pe:
+                print("Error parsing created_at inside update_status:", pe)
+        
+        if not created_dt:
+            created_dt = datetime.datetime.now()
+            
+        created = created_dt.strftime('%d-%m-%Y')
 
-    # UPDATE STATUS + RESOLVED DATE (Sync across identical locations)
-    emails_to_notify = [email] if email else []
-    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        # UPDATE STATUS + RESOLVED DATE (Sync across identical locations)
+        emails_to_notify = [email] if email else []
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
-    try:
         if data['latitude'] is not None and data['longitude'] is not None:
             # Fetch all emails for this exact location and title
             res_emails = supabase.table('grievances').select('users(email)').eq('title', data['title']).eq('latitude', data['latitude']).eq('longitude', data['longitude']).execute()
             for row in res_emails.data:
-                if row.get('users') and row['users'].get('email'):
-                    emails_to_notify.append(row['users']['email'])
+                row_users = row.get('users')
+                if row_users:
+                    if isinstance(row_users, dict) and row_users.get('email'):
+                        emails_to_notify.append(row_users['email'])
+                    elif isinstance(row_users, list) and len(row_users) > 0 and row_users[0] and row_users[0].get('email'):
+                        emails_to_notify.append(row_users[0]['email'])
 
             if new_status in ["Resolved", "Closed"]:
                 supabase.table('grievances').update({
@@ -880,25 +901,23 @@ def update_status(id):
                     'status': new_status,
                     'resolved_at': None
                 }).eq('id', id).execute()
-    except Exception as e:
-        print("Update status error:", e)
 
-    if new_status in ["Resolved", "Closed"]:
-        resolved_text = f"Resolved on: {datetime.datetime.now().strftime('%d-%m-%Y')}"
-    else:
-        resolved_text = "Not yet resolved"
+        if new_status in ["Resolved", "Closed"]:
+            resolved_text = f"Resolved on: {datetime.datetime.now().strftime('%d-%m-%Y')}"
+        else:
+            resolved_text = "Not yet resolved"
 
-    # SEND EMAIL
-    try:
-        for user_email in set(emails_to_notify): # Unique emails
-            if not user_email: continue
-            msg = Message(
-                subject="Grievance Status Updated",
-                sender=app.config['MAIL_USERNAME'],
-                recipients=[user_email]
-            )
+        # SEND EMAIL
+        try:
+            for user_email in set(emails_to_notify): # Unique emails
+                if not user_email: continue
+                msg = Message(
+                    subject="Grievance Status Updated",
+                    sender=app.config['MAIL_USERNAME'],
+                    recipients=[user_email]
+                )
 
-            msg.body = f"""
+                msg.body = f"""
 Hello,
 
 Your grievance has been updated.
@@ -914,12 +933,21 @@ Your grievance has been updated.
 Thank you,
 GrievTech Team
 """
-            mail.send(msg)
+                mail.send(msg)
 
-    except Exception as e:
-        print("Email error:", e)
+        except Exception as e:
+            print("Email error in update_status:", e)
 
-    return redirect(request.referrer or '/dashboard')
+        return redirect(request.referrer or '/dashboard')
+        
+    except Exception as outer_e:
+        import traceback
+        err_msg = traceback.format_exc()
+        # Log to file in the workspace so we can inspect it!
+        with open("update_status_error.log", "w", encoding="utf-8") as err_f:
+            err_f.write(err_msg)
+        print("CRITICAL EXCEPTION IN update_status:", err_msg)
+        return f"<h3>Internal Error during Status Update:</h3><pre>{err_msg}</pre>", 500
 
 
 # DELETE COMPLAINT
