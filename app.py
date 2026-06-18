@@ -3,6 +3,7 @@ import os
 import csv
 import io
 import datetime
+from dateutil.parser import isoparse
 from werkzeug.utils import secure_filename
 from PIL import Image
 from PIL.ExifTags import TAGS, GPSTAGS
@@ -15,6 +16,16 @@ from supabase import create_client, Client
 
 # Load environment variables
 load_dotenv()
+
+def safe_parse_datetime(iso_str):
+    if not iso_str:
+        return None
+    try:
+        return isoparse(iso_str)
+    except Exception as e:
+        print(f"Failed to parse datetime '{iso_str}': {e}")
+        return None
+
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -372,18 +383,9 @@ def dashboard():
         
         # Convert created_at and resolved_at ISO strings to Python datetime objects for Jinja2 template formatting
         if g.get('created_at'):
-            try:
-                # Replace 'Z' with '+00:00' for compatible ISO parsing
-                iso_str = g['created_at'].replace('Z', '+00:00')
-                g['created_at'] = datetime.datetime.fromisoformat(iso_str)
-            except Exception as pe:
-                print("Error parsing created_at:", pe)
+            g['created_at'] = safe_parse_datetime(g['created_at'])
         if g.get('resolved_at'):
-            try:
-                iso_str = g['resolved_at'].replace('Z', '+00:00')
-                g['resolved_at'] = datetime.datetime.fromisoformat(iso_str)
-            except Exception as pe:
-                print("Error parsing resolved_at:", pe)
+            g['resolved_at'] = safe_parse_datetime(g['resolved_at'])
 
     # Expose supabase credentials to frontend for Realtime status subscription
     return render_template('dashboard.html', grievances=data, supabase_url=SUPABASE_URL, supabase_key=SUPABASE_KEY)
@@ -785,17 +787,9 @@ def officer_dashboard():
         
         # Convert created_at and resolved_at ISO strings to Python datetime objects for Jinja2 template formatting
         if g.get('created_at'):
-            try:
-                iso_str = g['created_at'].replace('Z', '+00:00')
-                g['created_at'] = datetime.datetime.fromisoformat(iso_str)
-            except Exception as pe:
-                print("Error parsing created_at:", pe)
+            g['created_at'] = safe_parse_datetime(g['created_at'])
         if g.get('resolved_at'):
-            try:
-                iso_str = g['resolved_at'].replace('Z', '+00:00')
-                g['resolved_at'] = datetime.datetime.fromisoformat(iso_str)
-            except Exception as pe:
-                print("Error parsing resolved_at:", pe)
+            g['resolved_at'] = safe_parse_datetime(g['resolved_at'])
         data.append(g)
 
     return render_template(
@@ -851,14 +845,7 @@ def update_status(id):
         title = data['title']
         
         created_at_val = data.get('created_at')
-        created_dt = None
-        if created_at_val:
-            try:
-                # Support Z replacement and timezone offset parsing
-                iso_str = created_at_val.replace('Z', '+00:00')
-                created_dt = datetime.datetime.fromisoformat(iso_str)
-            except Exception as pe:
-                print("Error parsing created_at inside update_status:", pe)
+        created_dt = safe_parse_datetime(created_at_val)
         
         if not created_dt:
             created_dt = datetime.datetime.now()
@@ -1080,9 +1067,8 @@ def export_excel():
     for row in raw_records:
         username = row['users']['name'] if row.get('users') else 'Unknown'
         email = row['users']['email'] if row.get('users') else 'Unknown'
-        
-        created_at_dt = datetime.datetime.fromisoformat(row['created_at']) if row.get('created_at') else None
-        resolved_at_dt = datetime.datetime.fromisoformat(row['resolved_at']) if row.get('resolved_at') else None
+        created_at_dt = safe_parse_datetime(row.get('created_at'))
+        resolved_at_dt = safe_parse_datetime(row.get('resolved_at'))
 
         records.append({
             'id': row['id'],
