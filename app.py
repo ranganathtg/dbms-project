@@ -3,6 +3,8 @@ import os
 import csv
 import io
 import datetime
+import socket
+import threading
 from dateutil.parser import isoparse
 from werkzeug.utils import secure_filename
 from PIL import Image
@@ -13,6 +15,9 @@ import json
 from deep_translator import GoogleTranslator
 from dotenv import load_dotenv
 from supabase import create_client, Client
+
+# Set a default socket timeout to prevent SMTP or other sockets from hanging indefinitely
+socket.setdefaulttimeout(5.0)
 
 # Load environment variables
 load_dotenv()
@@ -25,6 +30,13 @@ def safe_parse_datetime(iso_str):
     except Exception as e:
         print(f"Failed to parse datetime '{iso_str}': {e}")
         return None
+
+def send_email_async(app_obj, msg):
+    try:
+        with app_obj.app_context():
+            mail.send(msg)
+    except Exception as e:
+        print("Async email send failed:", e)
 
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -183,7 +195,7 @@ def register():
                 recipients=[email]
             )
             msg.body = f'Your OTP is: {otp}'
-            mail.send(msg)
+            threading.Thread(target=send_email_async, args=(app, msg)).start()
 
             return render_template('register.html', show_otp=True)
 
@@ -350,7 +362,7 @@ You can track your complaint status here: http://127.0.0.1:5000/track/{tracking_
 Thank you,
 GrievTech Team
 """
-                mail.send(msg)
+                threading.Thread(target=send_email_async, args=(app, msg)).start()
         except Exception as ex:
             print("Failed to send submission email:", ex)
 
@@ -904,23 +916,18 @@ def update_status(id):
                     recipients=[user_email]
                 )
 
-                msg.body = f"""
-Hello,
-
-Your grievance has been updated.
-
-📌 Title: {title}
-📅 Submitted on: {created}
-
-🔄 Status changed:
-{old_status} ➝ {new_status}
-
-📌 {resolved_text}
-
-Thank you,
-GrievTech Team
-"""
-                mail.send(msg)
+                msg.body = (
+                    "Hello,\n\n"
+                    "Your grievance has been updated.\n\n"
+                    "\U0001f4cc Title: " + title + "\n"
+                    "\U0001f4c5 Submitted on: " + created + "\n\n"
+                    "\U0001f504 Status changed:\n"
+                    + old_status + " -> " + new_status + "\n\n"
+                    "\U0001f4cc " + resolved_text + "\n\n"
+                    "Thank you,\n"
+                    "GrievTech Team\n"
+                )
+                threading.Thread(target=send_email_async, args=(app, msg)).start()
 
         except Exception as e:
             print("Email error in update_status:", e)
