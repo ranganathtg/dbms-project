@@ -2,6 +2,7 @@
 <html>
 
 <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Track Complaint Status</title>
 
     <!-- Bootstrap -->
@@ -36,7 +37,7 @@
     <!-- MAIN CONTAINER -->
     <div class="container d-flex flex-column align-items-center mt-5 pt-4">
 
-        <div class="card p-4 shadow mb-4" style="width: 550px; border: 2px solid black; border-radius: 15px;">
+        <div class="card p-4 shadow mb-4" style="max-width: 550px; width: 100%; border: 2px solid black; border-radius: 15px;">
             <h3 class="text-center mb-3">🎫 Track Your Grievance</h3>
             
             <form method="POST" action="/track" class="d-flex mb-3">
@@ -53,7 +54,7 @@
 
         {% if complaint %}
         <!-- COMPLAINT DETAILS & TIMELINE CARD -->
-        <div class="card p-4 shadow mb-5" style="width: 550px; border: 2px solid black; border-radius: 15px; text-align: left;">
+        <div class="card p-4 shadow mb-5" style="max-width: 550px; width: 100%; border: 2px solid black; border-radius: 15px; text-align: left;">
             <div class="d-flex justify-content-between align-items-start">
                 <h4 style="color: #4b0082; font-weight: bold;">{{ complaint.title }}</h4>
                 <span class="badge bg-secondary">{{ complaint.category }}</span>
@@ -139,10 +140,24 @@
         </div>
         {% endif %}
 
-        <div style="width: 550px; text-align: center;">
+        <div style="max-width: 550px; width: 100%; text-align: center;">
+            {% if session.get('role') == 'admin' %}
+            <a href="/admin" class="btn btn-outline-secondary w-100 mb-3" style="border: 2px solid black;">
+                ← Back to Admin Dashboard
+            </a>
+            {% elif session.get('role') == 'officer' %}
+            <a href="/officer" class="btn btn-outline-secondary w-100 mb-3" style="border: 2px solid black;">
+                ← Back to Officer Dashboard
+            </a>
+            {% elif session.get('user_id') %}
+            <a href="/dashboard" class="btn btn-outline-secondary w-100 mb-3" style="border: 2px solid black;">
+                ← Back to Dashboard
+            </a>
+            {% else %}
             <a href="/" class="btn btn-outline-secondary w-100 mb-3" style="border: 2px solid black;">
                 ← Back to Home
             </a>
+            {% endif %}
         </div>
 
     </div>
