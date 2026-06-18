@@ -195,7 +195,7 @@ def register():
                 recipients=[email]
             )
             msg.body = f'Your OTP is: {otp}'
-            threading.Thread(target=send_email_async, args=(app, msg)).start()
+            threading.Thread(target=send_email_async, args=(app, msg), daemon=True).start()
 
             return render_template('register.html', show_otp=True)
 
@@ -362,7 +362,7 @@ You can track your complaint status here: http://127.0.0.1:5000/track/{tracking_
 Thank you,
 GrievTech Team
 """
-                threading.Thread(target=send_email_async, args=(app, msg)).start()
+                threading.Thread(target=send_email_async, args=(app, msg), daemon=True).start()
         except Exception as ex:
             print("Failed to send submission email:", ex)
 
@@ -927,7 +927,7 @@ def update_status(id):
                     "Thank you,\n"
                     "GrievTech Team\n"
                 )
-                threading.Thread(target=send_email_async, args=(app, msg)).start()
+                threading.Thread(target=send_email_async, args=(app, msg), daemon=True).start()
 
         except Exception as e:
             print("Email error in update_status:", e)
