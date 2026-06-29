@@ -76,6 +76,14 @@ def send_email_async(app_obj, msg):
             recipient = msg.recipients[0] if msg.recipients else ""
             sender_email = msg.sender or os.getenv("MAIL_USERNAME")
             
+            # Sanitize email addresses to remove any accidental whitespace or quotes
+            if sender_email:
+                sender_email = sender_email.strip().replace('"', '').replace("'", "")
+            if recipient:
+                recipient = recipient.strip().replace('"', '').replace("'", "")
+                
+            logger.info(f"Attempting to send email via Brevo HTTP API: from={sender_email}, to={recipient}")
+            
             data = {
                 "sender": {"name": "GrievTech Team", "email": sender_email},
                 "to": [{"email": recipient}],
