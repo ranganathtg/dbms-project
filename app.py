@@ -428,7 +428,9 @@ def submit():
 
         # Send submission email containing the Tracking ID
         try:
-            user_res = supabase.table('users').select('email').eq('id', user_id).execute()
+            target_uid = int(user_id) if isinstance(user_id, (int, str)) and str(user_id).isdigit() else user_id
+            user_res = supabase.table('users').select('email').eq('id', target_uid).execute()
+            logger.info(f"Submit email check for user_id {target_uid}: data={user_res.data}")
             if user_res.data and user_res.data[0].get('email'):
                 user_email = user_res.data[0]['email']
                 app_url = os.getenv("APP_URL").rstrip('/')
@@ -438,20 +440,22 @@ def submit():
                     recipients=[user_email]
                 )
                 msg.body = f"""Hello,
-
+ 
 Your grievance has been successfully registered.
-
+ 
 📌 Title: {title}
 📂 Category: {category}
 🚨 Priority: {priority}
 🎫 Tracking ID: {tracking_id}
-
+ 
 You can track your complaint status here: {app_url}/track/{tracking_id}
-
+ 
 Thank you,
 GrievTech Team
 """
                 threading.Thread(target=send_email_async, args=(app, msg), daemon=True).start()
+            else:
+                logger.warning(f"Could not find email for user_id: {target_uid}")
         except Exception as ex:
             logger.error(f"Failed to send submission email: {ex}", exc_info=True)
 
@@ -927,8 +931,8 @@ def update_status(id):
 
         new_status = request.form.get('status')
 
-        # Get old data + user email
-        res = supabase.table('grievances').select('title, latitude, longitude, status, created_at, resolved_at, users(email)').eq('id', id).execute()
+        # Get old data
+        res = supabase.table('grievances').select('title, latitude, longitude, status, created_at, resolved_at, user_id').eq('id', id).execute()
         data = res.data[0] if res.data else None
 
         if not data:
@@ -936,14 +940,17 @@ def update_status(id):
 
         old_status = data['status']
         
-        # Robust user email extraction
+        # Fetch user's email directly by user_id
         email = ""
-        users_data = data.get('users')
-        if users_data:
-            if isinstance(users_data, dict):
-                email = users_data.get('email', '')
-            elif isinstance(users_data, list) and len(users_data) > 0 and users_data[0]:
-                email = users_data[0].get('email', '')
+        user_id_val = data.get('user_id')
+        if user_id_val:
+            try:
+                target_uid = int(user_id_val) if isinstance(user_id_val, (int, str)) and str(user_id_val).isdigit() else user_id_val
+                user_res = supabase.table('users').select('email').eq('id', target_uid).execute()
+                if user_res.data and user_res.data[0].get('email'):
+                    email = user_res.data[0]['email']
+            except Exception as u_err:
+                logger.error(f"Failed to query email for user_id={user_id_val}: {u_err}")
                 
         title = data['title']
         
@@ -960,15 +967,17 @@ def update_status(id):
         now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
         if data['latitude'] is not None and data['longitude'] is not None:
-            # Fetch all emails for this exact location and title
-            res_emails = supabase.table('grievances').select('users(email)').eq('title', data['title']).eq('latitude', data['latitude']).eq('longitude', data['longitude']).execute()
-            for row in res_emails.data:
-                row_users = row.get('users')
-                if row_users:
-                    if isinstance(row_users, dict) and row_users.get('email'):
-                        emails_to_notify.append(row_users['email'])
-                    elif isinstance(row_users, list) and len(row_users) > 0 and row_users[0] and row_users[0].get('email'):
-                        emails_to_notify.append(row_users[0]['email'])
+            # Fetch all grievances for this exact location and title
+            res_grievances = supabase.table('grievances').select('user_id').eq('title', data['title']).eq('latitude', data['latitude']).eq('longitude', data['longitude']).execute()
+            uids = list(set([row.get('user_id') for row in res_grievances.data if row.get('user_id')]))
+            for uid in uids:
+                try:
+                    target_uid = int(uid) if isinstance(uid, (int, str)) and str(uid).isdigit() else uid
+                    user_res = supabase.table('users').select('email').eq('id', target_uid).execute()
+                    if user_res.data and user_res.data[0].get('email'):
+                        emails_to_notify.append(user_res.data[0]['email'])
+                except Exception as notify_err:
+                    logger.error(f"Failed to query notify email for user_id={uid}: {notify_err}")
 
             if new_status in ["Resolved", "Closed"]:
                 supabase.table('grievances').update({
