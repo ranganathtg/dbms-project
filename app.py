@@ -81,8 +81,8 @@ def send_email_async(app_obj, msg):
                 sender_email = sender_email.strip().replace('"', '').replace("'", "")
             if recipient:
                 recipient = recipient.strip().replace('"', '').replace("'", "")
-                
-            logger.info(f"Attempting to send email via Brevo HTTP API: from={sender_email}, to={recipient}")
+            print(f"DEBUG EMAIL SEND: from='{sender_email}', to='{recipient}'", flush=True)
+            logger.error(f"DEBUG EMAIL SEND: from='{sender_email}', to='{recipient}'")
             
             data = {
                 "sender": {"name": "GrievTech Team", "email": sender_email},
