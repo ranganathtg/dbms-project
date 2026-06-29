@@ -511,7 +511,7 @@ def track_complaint_empty():
 @app.route('/track/<tracking_id>')
 def track_complaint(tracking_id):
     try:
-        res = supabase.table('grievances').select('*, users(name)').eq('tracking_id', tracking_id).execute()
+        res = supabase.table('grievances').select('*').eq('tracking_id', tracking_id).execute()
         complaint = res.data[0] if res.data else None
     except Exception as e:
         logger.error(f"Track query error: {e}", exc_info=True)
@@ -522,7 +522,19 @@ def track_complaint(tracking_id):
         lang = session.get('lang', 'en')
         complaint['title'] = dynamic_translate(complaint['title'], lang)
         complaint['description'] = dynamic_translate(complaint['description'], lang)
-        complaint['username'] = complaint['users']['name'] if complaint.get('users') else 'Unknown'
+        
+        # Robust username extraction without join
+        username = 'Unknown'
+        user_id_val = complaint.get('user_id')
+        if user_id_val:
+            try:
+                target_uid = int(user_id_val) if isinstance(user_id_val, (int, str)) and str(user_id_val).isdigit() else user_id_val
+                user_res = supabase.table('users').select('name').eq('id', target_uid).execute()
+                if user_res.data:
+                    username = user_res.data[0].get('name', 'Unknown')
+            except Exception as u_err:
+                logger.error(f"Failed to query username for user_id={user_id_val}: {u_err}")
+        complaint['username'] = username
 
         # Determine timeline step
         # Stages: Submitted, Assigned, In Progress, Resolved, Closed
