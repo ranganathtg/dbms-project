@@ -1,23 +1,6 @@
-# Dependencies
-node_modules/
-
-# Environment files
+venv/
 .env
-.env.local
-.env.*
-
-# Build files
-dist/
-build/
-
-# Logs
-*.log
-
-# OS files
-.DS_Store
-Thumbs.db
-__pycache__/
+**pycache**/
 *.pyc
-.env
-.env.*
-node_modules/
+instance/
+.pytest_cache/

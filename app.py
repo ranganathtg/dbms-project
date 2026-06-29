@@ -1,20 +1,33 @@
-from flask import Flask, render_template, request, redirect, session, Response, url_for
+from flask import Flask, render_template, request, redirect, session, Response, url_for, flash
 import os
+import sys
 import csv
 import io
 import datetime
 import socket
 import threading
+import logging
+import traceback
+import random
+import json
 from dateutil.parser import isoparse
 from werkzeug.utils import secure_filename
 from PIL import Image
 from PIL.ExifTags import TAGS, GPSTAGS
 from flask_mail import Mail, Message
-import random
-import json
 from deep_translator import GoogleTranslator
 from dotenv import load_dotenv
 from supabase import create_client, Client
+
+# Configure Logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] %(levelname)s in %(module)s: %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Set a default socket timeout to prevent SMTP or other sockets from hanging indefinitely
 socket.setdefaulttimeout(5.0)
@@ -22,13 +35,31 @@ socket.setdefaulttimeout(5.0)
 # Load environment variables
 load_dotenv()
 
+# Startup Environment Validation
+REQUIRED_ENV_VARS = ["SUPABASE_URL", "SUPABASE_KEY", "MAIL_USERNAME", "MAIL_PASSWORD", "SECRET_KEY", "APP_URL"]
+missing_vars = [var for var in REQUIRED_ENV_VARS if not os.getenv(var) or os.getenv(var).strip() == ""]
+if missing_vars:
+    msg = f"CRITICAL STARTUP ERROR: Missing environment variables: {', '.join(missing_vars)}. The application cannot start."
+    logger.critical(msg)
+    raise RuntimeError(msg)
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+# Connect to Supabase
+try:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+except Exception as e:
+    logger.critical(f"Failed to initialize Supabase client: {e}")
+    raise
+
 def safe_parse_datetime(iso_str):
     if not iso_str:
         return None
     try:
         return isoparse(iso_str)
     except Exception as e:
-        print(f"Failed to parse datetime '{iso_str}': {e}")
+        logger.warning(f"Failed to parse datetime '{iso_str}': {e}")
         return None
 
 def send_email_async(app_obj, msg):
@@ -36,19 +67,10 @@ def send_email_async(app_obj, msg):
         with app_obj.app_context():
             mail.send(msg)
     except Exception as e:
-        print("Async email send failed:", e)
-
-
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-
-if not SUPABASE_URL or not SUPABASE_KEY or "YOUR_SUPABASE" in SUPABASE_URL:
-    raise RuntimeError("Supabase credentials not set. Please set SUPABASE_URL and SUPABASE_KEY in the .env file.")
-
-# Connect to Supabase
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        logger.error(f"Async email send failed: {e}", exc_info=True)
 
 # Extract EXIF GPS Data Helper
+
 def get_exif_data(image_path):
     try:
         image = Image.open(image_path)
@@ -81,41 +103,57 @@ def get_lat_lon(gps_info):
         return None
 
 def load_translations(lang):
+    base_dir = os.path.dirname(os.path.abspath(__file__))
     try:
-        with open(f"translations/{lang}.json", "r", encoding="utf-8") as f:
+        with open(os.path.join(base_dir, "translations", f"{lang}.json"), "r", encoding="utf-8") as f:
             return json.load(f)
-    except FileNotFoundError:
-        with open("translations/en.json", "r", encoding="utf-8") as f:
-            return json.load(f)
+    except Exception as e:
+        logger.warning(f"Could not load translation file for {lang}: {e}")
+        try:
+            with open(os.path.join(base_dir, "translations", "en.json"), "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as inner_e:
+            logger.error(f"Failed to load fallback en.json: {inner_e}")
+            return {}
 
 app = Flask(__name__)
-app.secret_key = "secret123"
+app.secret_key = os.getenv("SECRET_KEY")
+
+# Production Cookie Security Settings
+is_production = os.getenv("RENDER") == "true" or os.getenv("FLASK_ENV") == "production"
+if is_production:
+    app.config['SESSION_COOKIE_SECURE'] = True
+    app.config['SESSION_COOKIE_HTTPONLY'] = True
+else:
+    app.config['SESSION_COOKIE_SECURE'] = False
+    app.config['SESSION_COOKIE_HTTPONLY'] = True
 
 @app.context_processor
 def inject_translations():
     lang = session.get('lang', 'en')
     t = load_translations(lang)
     def _(key):
-        return t.get(key, key)
+        return t.get(key, key) if t else key
     return dict(_=_, lang=lang)
 
 # 🔹 Persistent Translation Cache
-CACHE_FILE = "translations_cache.json"
+CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "translations_cache.json")
 translation_cache = {}
 
 if os.path.exists(CACHE_FILE):
     try:
         with open(CACHE_FILE, "r", encoding="utf-8") as f:
             translation_cache = json.load(f)
-    except:
+    except Exception as e:
+        logger.warning(f"Failed to load translation cache from {CACHE_FILE}: {e}")
         translation_cache = {}
 
 def save_cache():
     try:
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(translation_cache, f, ensure_ascii=False, indent=4)
-    except:
-        pass
+    except Exception as e:
+        logger.error(f"Failed to save translation cache to {CACHE_FILE}: {e}")
 
 def dynamic_translate(text, target_lang):
     if not text or target_lang == 'en':
@@ -132,24 +170,27 @@ def dynamic_translate(text, target_lang):
         save_cache() # Save every time we get a new translation
         return result
     except Exception as e:
-        print("Translation error:", e)
+        logger.error(f"Translation error: {e}")
         return text
 
-# 📧 MAIL CONFIG (PUT YOUR EMAIL + APP PASSWORD)
-app.config['MAIL_SERVER'] = 'smtp.gmail.com'
-app.config['MAIL_PORT'] = 587
-app.config['MAIL_USE_TLS'] = True
-app.config['MAIL_USERNAME'] = 'vasuranga41@gmail.com'
-app.config['MAIL_PASSWORD'] = 'pnwasyogmocfycfz'
+# 📧 MAIL CONFIG (FROM ENVIRONMENT VARIABLES)
+app.config['MAIL_SERVER'] = os.getenv("MAIL_SERVER", "smtp.gmail.com")
+app.config['MAIL_PORT'] = int(os.getenv("MAIL_PORT", 587))
+app.config['MAIL_USE_TLS'] = os.getenv("MAIL_USE_TLS", "True").lower() in ("true", "1", "yes")
+app.config['MAIL_USERNAME'] = os.getenv("MAIL_USERNAME")
+app.config['MAIL_PASSWORD'] = os.getenv("MAIL_PASSWORD")
 
 mail = Mail(app)
 
-# 📁 FILE UPLOAD
-UPLOAD_FOLDER = 'static/uploads'
+# 📁 FILE UPLOAD (ABSOLUTE PATHS)
+UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'uploads')
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
+    try:
+        os.makedirs(UPLOAD_FOLDER)
+    except Exception as e:
+        logger.error(f"Failed to create upload directory {UPLOAD_FOLDER}: {e}")
 
 # 🔢 OTP GENERATE
 def generate_otp():
@@ -180,7 +221,7 @@ def register():
             if not name or not email or not password:
                 return render_template('register.html', error="All fields required")
 
-            otp = str(random.randint(100000, 999999))
+            otp = generate_otp()
 
             session['otp'] = otp
             session['temp_user'] = {
@@ -212,13 +253,13 @@ def register():
                         'role': 'user'
                     }).execute()
                 except Exception as err:
-                    print("Registration error:", err)
+                    logger.error(f"Registration error: {err}", exc_info=True)
                     return render_template('register.html', show_otp=True, error="Registration failed! Email might already exist.")
 
                 session.pop('otp', None)
                 session.pop('temp_user', None)
 
-                return redirect('/login')
+                return redirect(url_for('login'))
             else:
                 return render_template('register.html', show_otp=True, error="Invalid OTP")
 
@@ -234,15 +275,13 @@ def login():
         email = request.form.get('email')
         password = request.form['password']
 
-        print(f"--- LOGIN ATTEMPT ---")
-        print(f"Email entered: '{email}'")
-        print(f"Password entered: '{password}'")
+        logger.info(f"--- LOGIN ATTEMPT --- Email: {email}")
 
         try:
             res = supabase.table('users').select('*').eq('email', email).eq('password', password).execute()
             user = res.data[0] if res.data else None
         except Exception as e:
-            print("Login error querying Supabase:", e)
+            logger.error(f"Login error querying Supabase: {e}", exc_info=True)
             user = None
 
         if user:
@@ -250,11 +289,11 @@ def login():
             session['role'] = user['role']
 
             if user['role'] == 'admin':
-                return redirect('/admin')
+                return redirect(url_for('admin'))
             elif user['role'] == 'officer':
-                return redirect('/officer')
+                return redirect(url_for('officer_dashboard'))
             else:
-                return redirect('/dashboard')
+                return redirect(url_for('dashboard'))
         else:
             lang = session.get('lang', 'en')
             t_dict = load_translations(lang)
@@ -269,7 +308,7 @@ def login():
 @app.route('/submit', methods=['GET','POST'])
 def submit():
     if 'user_id' not in session:
-        return redirect('/login')
+        return redirect(url_for('login'))
 
     if request.method == 'POST':
         title = request.form['title']
@@ -286,41 +325,50 @@ def submit():
 
         file = request.files['file']
         filename = None
+        upload_error = False
 
         if file and file.filename != '':
             filename = secure_filename(file.filename)
             filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-            file.save(filepath)
-
-            # 📸 Extract EXIF GPS data ONLY if the form didn't already capture coordinates via OCR
-            if (not lat_val or not lon_val) and not filename.endswith('.pdf'):
-                gps_info = get_exif_data(filepath)
-                if gps_info:
-                    coords = get_lat_lon(gps_info)
-                    if coords:
-                        lat_val, lon_val = coords
-
-            # Upload to Supabase Storage
             try:
-                with open(filepath, 'rb') as f:
-                    supabase.storage.from_('uploads').upload(
-                        path=filename,
-                        file=f,
-                        file_options={"cache-control": "3600", "x-upsert": "true"}
-                    )
-            except Exception as se:
-                print("Supabase Storage upload error:", se)
+                file.save(filepath)
+
+                # 📸 Extract EXIF GPS data ONLY if the form didn't already capture coordinates via OCR
+                if (not lat_val or not lon_val) and not filename.endswith('.pdf'):
+                    gps_info = get_exif_data(filepath)
+                    if gps_info:
+                        coords = get_lat_lon(gps_info)
+                        if coords:
+                            lat_val, lon_val = coords
+
+                # Upload to Supabase Storage
+                try:
+                    with open(filepath, 'rb') as f:
+                        supabase.storage.from_('uploads').upload(
+                            path=filename,
+                            file=f,
+                            file_options={"cache-control": "3600", "x-upsert": "true"}
+                        )
+                except Exception as se:
+                    logger.error(f"Supabase Storage upload error: {se}", exc_info=True)
+                    upload_error = True
+            except Exception as fe:
+                logger.error(f"File save or processing error: {fe}", exc_info=True)
+                upload_error = True
 
         # Generate unique tracking ID
+        tracking_id = None
         try:
-            while True:
+            for _ in range(10): # retry loop to prevent infinite loop on db error
                 tid = f"GT-{random.randint(100000, 999999)}"
                 chk = supabase.table('grievances').select('id').eq('tracking_id', tid).execute()
                 if not chk.data:
                     tracking_id = tid
                     break
+            if not tracking_id:
+                tracking_id = f"GT-{random.randint(100000, 999999)}"
         except Exception as te:
-            print("Error generating tracking_id:", te)
+            logger.error(f"Error generating tracking_id: {te}", exc_info=True)
             tracking_id = f"GT-{random.randint(100000, 999999)}"
 
         try:
@@ -336,13 +384,17 @@ def submit():
                 'tracking_id': tracking_id
             }).execute()
         except Exception as e:
-            print("Submit insert error:", e)
+            logger.error(f"Submit insert error: {e}", exc_info=True)
+            # Render page with error or flash
+            flash("Database error: Could not save the grievance. Please try again later.", "danger")
+            return redirect(url_for('dashboard', error="Database error: Could not save the grievance."))
 
         # Send submission email containing the Tracking ID
         try:
             user_res = supabase.table('users').select('email').eq('id', user_id).execute()
             if user_res.data and user_res.data[0].get('email'):
                 user_email = user_res.data[0]['email']
+                app_url = os.getenv("APP_URL").rstrip('/')
                 msg = Message(
                     subject="Grievance Registered Successfully",
                     sender=app.config['MAIL_USERNAME'],
@@ -357,16 +409,18 @@ Your grievance has been successfully registered.
 🚨 Priority: {priority}
 🎫 Tracking ID: {tracking_id}
 
-You can track your complaint status here: http://127.0.0.1:5000/track/{tracking_id}
+You can track your complaint status here: {app_url}/track/{tracking_id}
 
 Thank you,
 GrievTech Team
 """
                 threading.Thread(target=send_email_async, args=(app, msg), daemon=True).start()
         except Exception as ex:
-            print("Failed to send submission email:", ex)
+            logger.error(f"Failed to send submission email: {ex}", exc_info=True)
 
-        return redirect('/dashboard')
+        if upload_error:
+            return redirect(url_for('dashboard', status='submitted_with_upload_error'))
+        return redirect(url_for('dashboard'))
 
     return render_template('submit.html')
 
@@ -377,7 +431,7 @@ GrievTech Team
 @app.route('/dashboard')
 def dashboard():
     if 'user_id' not in session:
-        return redirect('/login')
+        return redirect(url_for('login'))
 
     user_id = session['user_id']
     lang = session.get('lang', 'en')
@@ -386,7 +440,7 @@ def dashboard():
         res = supabase.table('grievances').select('*').eq('user_id', user_id).execute()
         data = res.data
     except Exception as e:
-        print("Dashboard query error:", e)
+        logger.error(f"Dashboard query error: {e}", exc_info=True)
         data = []
 
     for g in data:
@@ -419,7 +473,7 @@ def track_complaint(tracking_id):
         res = supabase.table('grievances').select('*, users(name)').eq('tracking_id', tracking_id).execute()
         complaint = res.data[0] if res.data else None
     except Exception as e:
-        print("Track query error:", e)
+        logger.error(f"Track query error: {e}", exc_info=True)
         complaint = None
 
     if complaint:
@@ -477,7 +531,7 @@ def detect_duplicates():
                 })
         return {"duplicates": duplicates[:5]}
     except Exception as e:
-        print("Detect duplicates error:", e)
+        logger.error(f"Detect duplicates error: {e}", exc_info=True)
         return {"duplicates": []}
 
 
@@ -487,14 +541,14 @@ def detect_duplicates():
 @app.route('/map')
 def view_map():
     if 'user_id' not in session or session.get('role') != 'admin':
-        return redirect('/login')
+        return redirect(url_for('login'))
 
     lang = session.get('lang', 'en')
     try:
         res = supabase.table('grievances').select('title, category, priority, latitude, longitude, duplicate_count').not_.is_('latitude', 'null').not_.is_('longitude', 'null').execute()
         complaints = res.data
     except Exception as e:
-        print("Map query error:", e)
+        logger.error(f"Map query error: {e}", exc_info=True)
         complaints = []
 
     for c in complaints:
@@ -513,7 +567,7 @@ def view_map():
 @app.route('/admin')
 def admin():
     if 'user_id' not in session or session.get('role') != 'admin':
-        return redirect('/login')
+        return redirect(url_for('login'))
 
     category = request.args.get('category', 'All')
     period = request.args.get('period')
@@ -539,7 +593,7 @@ def admin():
         res = q.order('created_at', desc=True).execute()
         raw_data = res.data
     except Exception as e:
-        print("Admin grievances query error:", e)
+        logger.error(f"Admin grievances query error: {e}", exc_info=True)
         raw_data = []
 
     grouped_data = {}
@@ -590,7 +644,7 @@ def admin():
         emergency_active = sum(1 for g in stats_res.data if g['priority'] == 'Emergency' and g['status'] != 'Resolved')
         resolved_total = sum(1 for g in stats_res.data if g['status'] == 'Resolved')
     except Exception as e:
-        print("Stats calculation error:", e)
+        logger.error(f"Stats calculation error: {e}", exc_info=True)
         total_active = emergency_active = resolved_total = 0
 
     stats = {
@@ -645,7 +699,7 @@ def admin():
                 # Sort by date key
                 chart_data = [monthly_data[d] for d in sorted(monthly_data.keys())]
         except Exception as e:
-            print("Chart generation error:", e)
+            logger.error(f"Chart generation error: {e}", exc_info=True)
             chart_data = []
 
     # 📍 FETCH MAP COMPLAINTS (Respects Filter)
@@ -685,7 +739,7 @@ def admin():
                 c['longitude'] = float(c['longitude'])
             map_complaints.append(c)
     except Exception as e:
-        print("Admin map complaints query error:", e)
+        logger.error(f"Admin map complaints query error: {e}", exc_info=True)
         map_complaints = []
 
     return render_template(
@@ -706,13 +760,13 @@ def admin():
 @app.route('/admin/analytics')
 def admin_analytics():
     if 'user_id' not in session or session.get('role') != 'admin':
-        return redirect('/login')
+        return redirect(url_for('login'))
 
     try:
         res = supabase.table('grievances').select('*').execute()
         all_grievances = res.data
     except Exception as e:
-        print("Analytics select error:", e)
+        logger.error(f"Analytics select error: {e}", exc_info=True)
         all_grievances = []
 
     total = len(all_grievances)
@@ -772,7 +826,7 @@ def admin_analytics():
 @app.route('/officer')
 def officer_dashboard():
     if 'user_id' not in session or session.get('role') != 'officer':
-        return redirect('/login')
+        return redirect(url_for('login'))
 
     user_id = session['user_id']
     lang = session.get('lang', 'en')
@@ -781,14 +835,14 @@ def officer_dashboard():
         user_res = supabase.table('users').select('department').eq('id', user_id).execute()
         department = user_res.data[0]['department'] if user_res.data and user_res.data[0].get('department') else 'Water'
     except Exception as e:
-        print("Officer query error:", e)
+        logger.error(f"Officer query error: {e}", exc_info=True)
         department = 'Water'
 
     try:
         res = supabase.table('grievances').select('*, users(name)').eq('category', department).order('created_at', desc=True).execute()
         raw_data = res.data
     except Exception as e:
-        print("Officer grievances query error:", e)
+        logger.error(f"Officer grievances query error: {e}", exc_info=True)
         raw_data = []
 
     data = []
@@ -817,14 +871,14 @@ def logout():
     lang = session.get('lang', 'en')
     session.clear()
     session['lang'] = lang
-    return redirect('/')
+    return redirect(url_for('home'))
 
 
 # LANGUAGE
 @app.route('/set_language/<lang>')
 def set_language(lang):
     session['lang'] = lang
-    return redirect(request.referrer or '/')
+    return redirect(request.referrer or url_for('home'))
 
 
 # UPDATE STATUS
@@ -832,7 +886,7 @@ def set_language(lang):
 def update_status(id):
     try:
         if 'user_id' not in session or session.get('role') not in ['admin', 'officer']:
-            return redirect('/login')
+            return redirect(url_for('login'))
 
         new_status = request.form.get('status')
 
@@ -841,7 +895,7 @@ def update_status(id):
         data = res.data[0] if res.data else None
 
         if not data:
-            return redirect(request.referrer or '/dashboard')
+            return redirect(request.referrer or url_for('dashboard'))
 
         old_status = data['status']
         
@@ -930,17 +984,19 @@ def update_status(id):
                 threading.Thread(target=send_email_async, args=(app, msg), daemon=True).start()
 
         except Exception as e:
-            print("Email error in update_status:", e)
+            logger.error(f"Email error in update_status: {e}", exc_info=True)
 
-        return redirect(request.referrer or '/dashboard')
+        return redirect(request.referrer or url_for('dashboard'))
         
     except Exception as outer_e:
-        import traceback
         err_msg = traceback.format_exc()
-        # Log to file in the workspace so we can inspect it!
-        with open("update_status_error.log", "w", encoding="utf-8") as err_f:
-            err_f.write(err_msg)
-        print("CRITICAL EXCEPTION IN update_status:", err_msg)
+        try:
+            # Log to file in the workspace
+            with open("update_status_error.log", "w", encoding="utf-8") as err_f:
+                err_f.write(err_msg)
+        except Exception as file_e:
+            logger.error(f"Failed to write error log file: {file_e}")
+        logger.error(f"CRITICAL EXCEPTION IN update_status: {err_msg}")
         return f"<h3>Internal Error during Status Update:</h3><pre>{err_msg}</pre>", 500
 
 
@@ -948,7 +1004,7 @@ def update_status(id):
 @app.route('/delete/<int:id>', methods=['POST'])
 def delete_complaint(id):
     if 'user_id' not in session or session.get('role') != 'admin':
-        return redirect('/login')
+        return redirect(url_for('login'))
 
     try:
         # 1. Fetch file path to delete from storage
@@ -961,20 +1017,20 @@ def delete_complaint(id):
                 try:
                     os.remove(file_path)
                 except Exception as e:
-                    print(f"Error deleting file locally: {e}")
+                    logger.error(f"Error deleting file locally: {e}", exc_info=True)
 
             # Delete from Supabase Storage
             try:
                 supabase.storage.from_('uploads').remove([row['file_path']])
             except Exception as e:
-                print("Error deleting file from storage:", e)
+                logger.error(f"Error deleting file from storage: {e}", exc_info=True)
 
         # 2. Delete from database
         supabase.table('grievances').delete().eq('id', id).execute()
     except Exception as e:
-        print("Delete complaint error:", e)
+        logger.error(f"Delete complaint error: {e}", exc_info=True)
         
-    return redirect('/admin')
+    return redirect(url_for('admin'))
 
 
 # FORGOT PASSWORD
@@ -1023,7 +1079,7 @@ def chatbot():
             'bot_response': response
         }).execute()
     except Exception as e:
-        print("Chat logs insert error:", e)
+        logger.error(f"Chat logs insert error: {e}", exc_info=True)
 
     return {"response": response}
 
@@ -1031,10 +1087,16 @@ def chatbot():
 # =========================
 # FEEDBACK
 # =========================
+@app.route('/feedback', methods=['GET', 'POST'])
+def feedback():
+    if request.method == 'POST':
+        return submit_feedback()
+    return redirect(url_for('dashboard') + "#feedback")
+
 @app.route('/submit_feedback', methods=['POST'])
 def submit_feedback():
     if 'user_id' not in session:
-        return redirect('/login')
+        return redirect(url_for('login'))
     
     user_id = session['user_id']
     rating = request.form.get('rating')
@@ -1047,12 +1109,12 @@ def submit_feedback():
                 'rating': int(rating),
                 'message': message
             }).execute()
-            return redirect('/dashboard?status=feedback_submitted')
+            return redirect(url_for('dashboard', status='feedback_submitted'))
         except Exception as e:
-            print("Feedback insert error:", e)
-            return redirect('/dashboard?error=feedback_failed')
+            logger.error(f"Feedback insert error: {e}", exc_info=True)
+            return redirect(url_for('dashboard', error='feedback_failed'))
     
-    return redirect('/dashboard?error=feedback_failed')
+    return redirect(url_for('dashboard', error='feedback_failed'))
 
 
 # =========================
@@ -1061,13 +1123,13 @@ def submit_feedback():
 @app.route('/export')
 def export_excel():
     if 'user_id' not in session or session.get('role') != 'admin':
-        return redirect('/login')
+        return redirect(url_for('login'))
 
     try:
         res = supabase.table('grievances').select('*, users(name, email)').order('created_at', desc=True).execute()
         raw_records = res.data
     except Exception as e:
-        print("Export select error:", e)
+        logger.error(f"Export select error: {e}", exc_info=True)
         raw_records = []
 
     records = []
@@ -1129,7 +1191,7 @@ def serve_upload(filename):
         url = supabase.storage.from_('uploads').get_public_url(filename)
         return redirect(url)
     except Exception as e:
-        print("Error serving upload from Supabase storage:", e)
+        logger.error(f"Error serving upload from Supabase storage: {e}", exc_info=True)
         # Fallback to local files if Supabase storage has an issue
         return redirect(url_for('static', filename='uploads/' + filename))
 
