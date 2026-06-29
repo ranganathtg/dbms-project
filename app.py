@@ -67,7 +67,7 @@ def send_email_async(app_obj, msg):
     if brevo_api_key:
         try:
             import requests
-            url = "https://api.brevo.com/v3/smtp/emails"
+            url = "https://api.brevo.com/v3/smtp/email"
             headers = {
                 "api-key": brevo_api_key,
                 "Content-Type": "application/json",
