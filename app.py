@@ -63,11 +63,40 @@ def safe_parse_datetime(iso_str):
         return None
 
 def send_email_async(app_obj, msg):
+    brevo_api_key = os.getenv("BREVO_API_KEY")
+    if brevo_api_key:
+        try:
+            import requests
+            url = "https://api.brevo.com/v3/smtp/emails"
+            headers = {
+                "api-key": brevo_api_key,
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            }
+            recipient = msg.recipients[0] if msg.recipients else ""
+            sender_email = msg.sender or os.getenv("MAIL_USERNAME")
+            
+            data = {
+                "sender": {"name": "GrievTech Team", "email": sender_email},
+                "to": [{"email": recipient}],
+                "subject": msg.subject,
+                "textContent": msg.body
+            }
+            response = requests.post(url, json=data, headers=headers)
+            if response.status_code not in [200, 201, 202]:
+                logger.error(f"Brevo HTTP API failed: {response.text}")
+            else:
+                logger.info(f"Email successfully sent to {recipient} via Brevo HTTP API")
+                return
+        except Exception as e:
+            logger.error(f"Failed to send email via Brevo HTTP API: {e}", exc_info=True)
+
     try:
         with app_obj.app_context():
             mail.send(msg)
     except Exception as e:
-        logger.error(f"Async email send failed: {e}", exc_info=True)
+        logger.error(f"Async email send failed via SMTP: {e}", exc_info=True)
+
 
 # Extract EXIF GPS Data Helper
 
