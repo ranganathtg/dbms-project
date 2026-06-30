@@ -320,15 +320,30 @@ input:focus,
 /* 🔹 MOBILE RESPONSIVE STYLES */
 @media (max-width: 768px) {
     body {
-        padding-top: 70px;
+        padding-top: 75px !important;
     }
     
     .top-header {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
         padding: 8px 12px;
+        height: 65px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
     }
     
     .title {
-        font-size: 18px;
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 16px;
+        max-width: 45%;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
     
     .logo img {
@@ -378,31 +393,91 @@ input:focus,
         margin: 0;
         text-align: center;
     }
+
+    /* Prevent vh-100 cut-offs on mobile and tablets */
+    .vh-100 {
+        height: auto !important;
+        min-height: calc(100vh - 80px) !important;
+        padding: 30px 10px !important;
+        align-items: flex-start !important;
+    }
 }
 
 @media (max-width: 576px) {
+    .title {
+        display: none; /* Hide center title on small mobile screens to prevent overlap */
+    }
+
+    /* Vertical Timeline for Mobile */
     .timeline-container {
-        margin: 25px 0;
+        flex-direction: column;
+        align-items: flex-start;
+        height: auto;
+        padding-left: 40px;
+        margin: 20px 0;
+        position: relative;
+    }
+    
+    .timeline-line {
+        left: 28px;
+        top: 0;
+        bottom: 0;
+        width: 4px;
+        height: 100%;
+        transform: none;
+    }
+    
+    .timeline-progress {
+        left: 28px;
+        top: 0;
+        width: 4px !important;
+        height: var(--progress-height, 0%) !important;
+        transform: none;
     }
     
     .timeline-step {
-        width: 28px;
-        height: 28px;
-        font-size: 10px;
+        margin: 15px 0;
+        width: 32px;
+        height: 32px;
+        font-size: 11px;
         border-width: 3px;
+        z-index: 3;
     }
     
     .timeline-label {
-        font-size: 8px;
-        top: 32px;
+        position: relative;
+        top: 0;
+        left: 0;
+        transform: none;
+        margin-left: 50px;
+        margin-top: -26px;
+        display: block;
+        text-align: left;
+        font-size: 13px;
+        white-space: normal;
     }
 
-    .card {
+    /* Chatbot window size adjustment for mobile */
+    #chat-window {
+        width: calc(100% - 40px) !important;
+        right: 20px !important;
+        bottom: 90px !important;
+        height: 380px !important;
+    }
+    #chatbot-toggle {
+        right: 20px !important;
+        bottom: 20px !important;
+        width: 50px !important;
+        height: 50px !important;
+        font-size: 24px !important;
+    }
+
+    .card, .form-container, .glass-card {
         padding: 15px !important;
     }
     
     h2 {
-        font-size: 22px;
+        font-size: 20px;
     }
     
     h3 {

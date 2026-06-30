@@ -209,7 +209,8 @@
         <!-- TABLE -->
         {% if grievances %}
         <div class="card shadow p-3">
-            <table class="table table-bordered table-hover text-center">
+            <div class="table-responsive">
+                <table class="table table-bordered table-hover text-center">
 
                 <thead class="table-dark">
                     <tr>
@@ -295,6 +296,7 @@
                 </tbody>
 
             </table>
+            </div>
         </div>
         {% else %}
         <p class="text-center text-muted">{{ _('no_complaints') }}</p>
@@ -312,20 +314,22 @@
                         aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
-                    <table class="table table-bordered text-center">
-                        <thead class="table-light">
-                            <tr>
-                                <th>#</th>
-                                <th>{{ _('reported_by') }}</th>
-                                <th>{{ _('problem_type') }}</th>
-                                <th class="text-center">📍 {{ _('trace') }}</th>
-                                <th class="text-center">🔄 {{ _('update') }}</th>
-                            </tr>
-                        </thead>
-                        <tbody id="modalReportsBody">
-                            <!-- Populated by JS -->
-                        </tbody>
-                    </table>
+                    <div class="table-responsive">
+                        <table class="table table-bordered text-center">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>#</th>
+                                    <th>{{ _('reported_by') }}</th>
+                                    <th>{{ _('problem_type') }}</th>
+                                    <th class="text-center">📍 {{ _('trace') }}</th>
+                                    <th class="text-center">🔄 {{ _('update') }}</th>
+                                </tr>
+                            </thead>
+                            <tbody id="modalReportsBody">
+                                <!-- Populated by JS -->
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>

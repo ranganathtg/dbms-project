@@ -76,7 +76,7 @@
                     <div class="timeline-line"></div>
                     <!-- Timeline progress percentage calculation based on active step -->
                     {% set progress_width = (active_step - 1) * 25 %}
-                    <div class="timeline-progress" style="width: {{ progress_width }}%;"></div>
+                    <div class="timeline-progress" style="width: {{ progress_width }}%; --progress-height: {{ progress_width }}%;"></div>
                     
                     <!-- Step 1: Submitted -->
                     <div class="timeline-step {% if active_step >= 1 %}active{% endif %} {% if active_step > 1 %}completed{% endif %}">
